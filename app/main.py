@@ -74,6 +74,12 @@ app.add_middleware(
 # Include Routers
 app.include_router(dashboard_router)
 
+# DEV-ONLY: mock dashboard for eyeballing the API during development.
+# Never registered in production — no /mock or /mock/token there.
+if ENV != "production":
+    from app.routes.mock_dashboard import router as mock_router
+    app.include_router(mock_router)
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     # Full detail is logged for us only — never returned to the caller.

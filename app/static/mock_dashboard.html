@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mock Dashboard — UCR Smart City</title>
+  <!-- Leaflet: free map library, loaded from CDN -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    body { font-family: system-ui, "Segoe UI", Tahoma, sans-serif; margin: 0; background: #eef3f8; color: #1c2e3e; }
+    header { background: #4A90C4; color: #fff; padding: 16px 24px; }
+    header h1 { margin: 0; font-size: 20px; }
+    .stats { display: flex; gap: 12px; padding: 16px 24px; flex-wrap: wrap; }
+    .stat { background: #fff; border-radius: 10px; padding: 12px 18px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+    .stat b { display: block; font-size: 24px; color: #1E527A; }
+    .stat span { font-size: 12px; color: #5A7A94; }
+    #map { height: 320px; margin: 0 24px 16px; border-radius: 10px; }
+    .reports { padding: 0 24px 40px; display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+    .card { background: #fff; border-radius: 10px; padding: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+    .card h3 { margin: 0 0 6px; font-size: 15px; }
+    .meta { font-size: 12px; color: #5A7A94; margin-bottom: 8px; }
+    .kv { font-size: 13px; margin: 2px 0; }
+    .kv b { color: #1E527A; }
+    .photo { width: 100%; border-radius: 8px; margin-top: 8px; background: #f0f0f0; }
+    .photo.missing { padding: 30px; text-align: center; color: #999; font-size: 12px; }
+    .err { color: #E05252; padding: 24px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🏙️ Mock Dashboard — ข้อมูลจาก survey จริง</h1>
+  </header>
+
+  <div class="stats" id="stats">กำลังโหลด…</div>
+  <div id="map"></div>
+  <div class="reports" id="reports"></div>
+
+  <script>
+  // ---- helpers ----------------------------------------------------------
+  // ดึง image_id จาก payload (q_photo เก็บเป็น {image_id, image_url})
+  function findImageId(payload) {
+    for (const v of Object.values(payload || {})) {
+      if (v && typeof v === "object" && v.image_id) return v.image_id;
+    }
+    return null;
+  }
+  // payload คำตอบที่ไม่ใช่รูป/พิกัด → แสดงเป็น key: value
+  function renderAnswers(payload) {
+    return Object.entries(payload || {})
+      .filter(([k, v]) => !(v && typeof v === "object" && (v.image_id || v.lat)))
+      .map(([k, v]) => `<div class="kv"><b>${k}</b>: ${Array.isArray(v) ? v.join(", ") : v}</div>`)
+      .join("");
+  }
+
+  // ---- main -------------------------------------------------------------
+  async function main() {
+    try {
+      // 1) ขอ dev token (เซิร์ฟเวอร์ mint ให้ด้วย SECRET_KEY)
+      const { token } = await (await fetch("/mock/token")).json();
+      const auth = { headers: { Authorization: "Bearer " + token } };
+
+      // 2) ดึง stats จาก API จริง
+      const stats = await (await fetch("/api/dashboard/stats", auth)).json();
+      document.getElementById("stats").innerHTML = `
+        <div class="stat"><b>${stats.total_users}</b><span>ผู้ใช้</span></div>
+        <div class="stat"><b>${stats.total_completed_reports}</b><span>report เสร็จ</span></div>
+        <div class="stat"><b>${stats.total_incomplete_reports}</b><span>report ค้าง</span></div>`;
+
+      // 3) ดึง reports ทั้งหมดจาก API จริง
+      const reports = await (await fetch("/api/dashboard/reports", auth)).json();
+
+      // 4) แผนที่ + หมุด
+      const map = L.map("map").setView([13.75, 100.5], 6);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        { attribution: "© OpenStreetMap" }).addTo(map);
+      const pts = [];
+
+      // 5) การ์ดต่อ report
+      const box = document.getElementById("reports");
+      box.innerHTML = "";
+      for (const r of reports) {
+        const imgId = findImageId(r.payload);
+        const hasLoc = r.latitude != null && r.longitude != null;
+        if (hasLoc) {
+          pts.push([r.latitude, r.longitude]);
+          L.marker([r.latitude, r.longitude]).addTo(map)
+            .bindPopup(`report #${r.report_id}`);
+        }
+        const photo = imgId
+          ? `<img class="photo" src="/api/dashboard/image/${imgId}"
+                 onerror="this.outerHTML='&lt;div class=&quot;photo missing&quot;&gt;รูปหมดอายุ/ดึงไม่ได้&lt;/div&gt;'">`
+          : `<div class="photo missing">ไม่มีรูป</div>`;
+        box.insertAdjacentHTML("beforeend", `
+          <div class="card">
+            <h3>report #${r.report_id} — ${r.survey_version}</h3>
+            <div class="meta">${new Date(r.created_at).toLocaleString("th-TH")}<br>
+              ${hasLoc ? `📍 ${r.latitude.toFixed(5)}, ${r.longitude.toFixed(5)}` : "ไม่มีพิกัด"}</div>
+            ${renderAnswers(r.payload)}
+            ${photo}
+          </div>`);
+      }
+      if (pts.length) map.fitBounds(pts, { padding: [40, 40] });
+    } catch (e) {
+      document.body.insertAdjacentHTML("beforeend",
+        `<div class="err">โหลดไม่สำเร็จ: ${e}</div>`);
+    }
+  }
+  main();
+  </script>
+</body>
+</html>

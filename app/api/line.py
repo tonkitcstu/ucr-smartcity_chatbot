@@ -26,7 +26,7 @@ from app.api.deps import get_db, get_redis
 from app.clients import line as line_client
 from app.clients import media
 from app.core.config import LINE_CHANNEL_SECRET
-from app.services import broadcast, burst, survey
+from app.services import broadcast, burst, quota, survey, sweeper
 
 log = logging.getLogger(__name__)
 
@@ -164,6 +164,35 @@ async def answer(
                 await line_client.send(reply_token, session, survey.PHOTO_ADDED)
                 return
 
+        # ── ด่านโควตา — ต้องอยู่ตรงนี้ หลังงานรูป ก่อนเรียกโมเดล ───────────
+        #
+        # งานแนบรูปข้างบนไม่เรียกโมเดลเลย (ดู attach_photo) เลยไม่ควรโดนกั้น
+        # ชนเพดานแล้วยังส่งรูปเข้าใบที่เล่าไว้ได้ตามปกติ
+        if not (gate := await quota.allowed(r, session))["go"]:
+            log.warning(
+                "โควตากั้นไว้ session=%s โซน=%s เพราะ=%s เล่าค้างอยู่=%s",
+                session,
+                gate["zone"],
+                gate["reason"],
+                gate["mid_draft"],
+            )
+
+            # แดงตอนเขาเล่าค้างอยู่ — **ปิดใบเก็บเท่าที่เล่ามา อย่าปล่อยให้หายไปเงียบ ๆ**
+            # ทางเดียวกับตัวกวาด: ใบที่ยังไม่มีเนื้อเรื่องปล่อยไป ใบที่มีเก็บลงถาวร
+            # ("ใบที่ไม่ครบดีกว่าใบที่ไม่มี" — ดู services/sweeper.py)
+            saved = 0
+            if gate["zone"] == quota.RED and gate["mid_draft"]:
+                try:
+                    saved = await sweeper.close_open(r, pool, session, source="capped")
+                except Exception:
+                    log.exception("ปิดใบตอนชนเพดานไม่สำเร็จ session=%s", session)
+
+            # เก็บเรื่องเขาไว้แล้วต้องบอกเขา ไม่งั้นเขาเดินจากไปโดยไม่รู้ว่าถึงมือเรา
+            await line_client.send(
+                reply_token, session, await quota.notice(r, gate["zone"], saved > 0)
+            )
+            return
+
         result = await survey.reply(
             r,
             pool,
@@ -180,6 +209,19 @@ async def answer(
         # ใบที่เกิดจากการที่เราทักไป ผูกกลับไปที่แถวการทักครั้งนั้น
         for report_id in result["report_ids"]:
             await broadcast.link_report(pool, r, session, report_id)
+
+        # ── บวกตัวนับ **หลังคุยจบ** เพราะก่อนคุยยังไม่รู้ว่าตานี้กินเท่าไหร่ ──
+        await quota.spend(r, session, result["used"])
+
+        # ไม่เหลือใบค้างแล้ว = เริ่มนับ cap ต่อใบใหม่ ไม่งั้นคนที่เล่าสองเรื่องติดกัน
+        # จะลากยอดของใบแรกมาชนเพดานกลางเรื่องที่สอง
+        if not result["reports"]:
+            await quota.clear_draft(r, session)
+
+        # ให้ AI แต่งข้อความโซนเหลืองเก็บไว้ตอนที่ยังเรียกมันได้ ข้างในเช็คเองว่า
+        # มีของสดอยู่แล้วหรือยัง — วันละครั้ง ไม่ได้ยิงทุกตา
+        if gate["zone"] == quota.GREEN:
+            await quota.refresh_notice(r)
     except Exception:
         # Redis ล่ม AI ไม่ตอบ ดิสก์เต็ม — อะไรก็ตามที่เราไม่ได้เตรียมไว้
         # ตรงนี้ทำงานหลังตอบ 200 ไปแล้ว ถ้าปล่อยให้ตายเงียบ **ชาวบ้านจะเห็นแค่ความเงียบ**

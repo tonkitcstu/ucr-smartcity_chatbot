@@ -14,7 +14,7 @@
 import json
 
 from openai import AsyncOpenAI
-from app.core.config import API_ENDPOINT, API_KEY
+from app.core.config import API_ENDPOINT, API_KEY, REASONING_EFFORT
 
 # ชื่อโมเดลอยู่ที่เดียว เดิมพิมพ์ซ้ำ 3 ที่ แล้ววันเปลี่ยนก็ลืมที่ใดที่หนึ่งเสมอ
 #
@@ -26,12 +26,54 @@ MODEL = "gemini-flash-lite-latest"
 
 # คิดหนักหน่อยได้ ตาหนึ่งของบทสนทนาไม่ได้เกิดถี่ขนาดต้องประหยัด
 # และของที่เราขอจากมันคือการ**ไม่ปั้นเรื่องที่ชาวบ้านไม่ได้พูด** ซึ่งพลาดแล้วแพง
-EFFORT = {"reasoning_effort": "high"}
+#
+# **วัดเทียบ low/medium/high แล้ว 8 ส.ค. 69** (บทสนทนาเดียวกัน 6 ตา 11 call):
+#
+#     low     70,539 token · 2.4 วิ/ตา · คิด 0 token
+#     medium  79,282 token · 5.2 วิ/ตา · คิด 5,735 token
+#     high    86,078 token · 6.9 วิ/ตา · คิด 9,097 token
+#
+# เก็บข้อมูลลงใบได้ **ครบ 8/8 ช่องเท่ากันทั้งสามระดับ** และบทสนทนาที่ไม่มีข้อมูลเลย
+# ก็**ไม่ปั้นเรื่องเพิ่มทั้งสามระดับ** (0/7 ช่อง) — ยังไม่เจอหลักฐานว่า low โง่ลง
+# แต่วัดมาแค่บทสนทนาละหนึ่งรอบ ยังบางเกินกว่าจะเปลี่ยนค่าตั้งต้นของตัวที่กันการปั้นเรื่อง
+#
+# **ที่แพงจริงไม่ใช่การคิด แต่คือ prompt ที่ส่งซ้ำทุก call** — 88% ของ token ที่ high
+# และ 98.6% ที่ low เป็น prompt ล้วน ๆ prompt caching จึงคุ้มกว่าการลด effort มาก
+EFFORT = {"reasoning_effort": REASONING_EFFORT}
 
 client = AsyncOpenAI(
     api_key=API_KEY,
     base_url=API_ENDPOINT,
 )
+
+
+def _usage(completion) -> dict:
+    """`{"calls": 1, "tokens": N}` — **เลขจริงจากผู้ให้บริการ ไม่ใช่ค่าประมาณ**
+
+    ของนี้ติดกลับมาทุก response อยู่แล้ว เดิมเราทิ้งทุกครั้ง ทั้งที่มันคือตัวเดียว
+    ที่บอกได้ว่าตาหนึ่งกินไปเท่าไหร่จริง ๆ — หนึ่งตาห่างกันได้ 5 เท่า (หัวคงที่ ~9k
+    บวกประวัติที่โตขึ้นเรื่อย ๆ) นับเป็นจำนวนครั้งอย่างเดียวเลยหยาบเกินกว่าจะกันอะไรได้
+
+    คืนเป็น dict ธรรมดา คนนอกไฟล์นี้จะได้ไม่ต้องรู้จักหน้าตา object ของ OpenAI
+    หาไม่เจอ = 0 ไม่ใช่ error — ตัวนับพังไม่ควรทำให้ชาวบ้านคุยไม่ได้
+
+    **ต้องใช้ total_tokens เป็นหลัก ห้ามเอา prompt + completion เป็นตัวตั้ง**
+    ฝั่ง Gemini ไม่นับ token ที่ใช้ "คิด" ไว้ใน completion_tokens และไม่ยอมบอกใน
+    completion_tokens_details.reasoning_tokens ด้วย (ได้ 0 ทุกครั้งที่ลอง) มันโผล่
+    เฉพาะใน total_tokens — วัดจริงแล้วต่างกันถึง 9,097 token ต่อบทสนทนาที่ effort=high
+    บวกเองจากสองช่องนั้นจะนับขาดไปราว 11% ซึ่งคือส่วนที่แพงที่สุดของการเปิดให้มันคิด
+    """
+    usage = getattr(completion, "usage", None)
+    if usage is None:
+        return {"calls": 1, "tokens": 0}
+
+    total = getattr(usage, "total_tokens", None)
+    if total is None:
+        total = (getattr(usage, "prompt_tokens", 0) or 0) + (
+            getattr(usage, "completion_tokens", 0) or 0
+        )
+
+    return {"calls": 1, "tokens": total or 0}
 
 
 async def get_playground(message: str) -> str:
@@ -46,8 +88,11 @@ async def get_playground(message: str) -> str:
     return completion.choices[0].message.content
 
 
-async def chat(messages: list[dict]) -> str:
-    """Same model as the playground, but takes a full message history."""
+async def chat(messages: list[dict]) -> tuple[str, dict]:
+    """Same model as the playground, but takes a full message history.
+
+    คืน `(ข้อความ, usage)` — ตัวหลังเอาไปให้ `services/quota.py` นับ
+    """
 
     completion = await client.chat.completions.create(
         model=MODEL,
@@ -55,7 +100,7 @@ async def chat(messages: list[dict]) -> str:
         extra_body=EFFORT,
     )
 
-    return completion.choices[0].message.content
+    return completion.choices[0].message.content, _usage(completion)
 
 
 def _no_nulls(value):
@@ -76,7 +121,7 @@ async def chat_tools(messages: list[dict], tools: list[dict]) -> dict:
     Returns a plain dict so nothing outside this file has to know what an
     OpenAI object looks like:
 
-        {"content": "...", "tool_calls": [{"id", "name", "arguments": {...}}]}
+        {"content": "...", "tool_calls": [...], "usage": {"calls": 1, "tokens": N}}
 
     `_raw` ที่ติดมาในแต่ละ call เป็นของภายในไฟล์นี้ **คนนอกห้ามอ่าน** — ดู tool_exchange
     """
@@ -90,6 +135,7 @@ async def chat_tools(messages: list[dict], tools: list[dict]) -> dict:
 
     message = completion.choices[0].message
     return {
+        "usage": _usage(completion),
         "content": message.content or "",
         "tool_calls": [
             {

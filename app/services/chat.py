@@ -11,7 +11,7 @@ SYSTEM_PROMPT = "You are a helpful assistant. Reply concisely."
 async def reply(r: Redis, session_id: str, message: str) -> str:
     history = await memory.load(r, session_id)
 
-    answer = await llm.chat(
+    answer, _used = await llm.chat(
         [{"role": "system", "content": SYSTEM_PROMPT}]
         + history
         + [{"role": "user", "content": message}]

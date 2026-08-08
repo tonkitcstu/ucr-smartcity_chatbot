@@ -60,7 +60,23 @@ async def rescue(r: Redis, pool: asyncpg.Pool) -> int:
     return saved
 
 
-async def _rescue_session(r: Redis, pool: asyncpg.Pool, session_id: str) -> int:
+async def close_open(
+    r: Redis, pool: asyncpg.Pool, session_id: str, source: str = "rescued"
+) -> int:
+    """ปิดใบที่ค้างอยู่ตอนนี้ เก็บเท่าที่เขาเล่ามา — **ทางเดียวกับตอนกวาด**
+
+    มีไว้ให้คนนอกเรียกตอนต้องตัดบทกลางคัน (เช่นชนเพดานโควตา) จะได้ไม่ต้องมี
+    ตรรกะ "เก็บเท่าที่มี" สองชุดในโปรเจกต์ที่วันหลังจะเถียงกันเอง
+
+    ตัวกวาดเรียก `_rescue_session` ตรง ๆ เพราะถือกุญแจอยู่แล้ว ซ้อนอีกชั้นจะค้าง
+    """
+    async with lock.one_at_a_time(r, session_id, wait=0):
+        return await _rescue_session(r, pool, session_id, source)
+
+
+async def _rescue_session(
+    r: Redis, pool: asyncpg.Pool, session_id: str, source: str = "rescued"
+) -> int:
     saved = 0
 
     for topic, report in (await draft.load_all(r, session_id)).items():
@@ -72,14 +88,15 @@ async def _rescue_session(r: Redis, pool: asyncpg.Pool, session_id: str) -> int:
             pool,
             {
                 "session_id": session_id,
-                "source": "rescued",
+                "source": source,
                 **survey.public(report),
             },
         )
         await draft.remove(r, session_id, topic)
         saved += 1
         log.warning(
-            "เก็บใบที่ใกล้หมดอายุไว้ทัน id=%s session=%s ขาด=%s",
+            "เก็บใบที่ยังไม่ครบไว้ทัน (%s) id=%s session=%s ขาด=%s",
+            source,
             report_id,
             session_id,
             survey.next_goal(report),

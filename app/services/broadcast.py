@@ -102,7 +102,8 @@ async def opening(topic: str, where: str | None = None) -> str:
     )
 
     try:
-        text = (await llm.chat([{"role": "user", "content": prompt}])).strip()
+        text, _used = await llm.chat([{"role": "user", "content": prompt}])
+        text = text.strip()
     except Exception as exc:
         raise NoMessage("โมเดลแต่งข้อความเปิดไม่สำเร็จ") from exc
 

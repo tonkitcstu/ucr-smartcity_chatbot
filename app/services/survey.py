@@ -936,6 +936,8 @@ def _attached_only() -> dict:
         "asking_location": False,
         "asking_photo": False,
         "store_broke": False,
+        # ไม่ได้เรียกโมเดลเลย ตานี้ฟรี
+        "used": {"calls": 0, "tokens": 0},
     }
 
 
@@ -1044,8 +1046,13 @@ async def _turn(
 
     tool = _tool(homes)
 
+    # หนึ่งตาเรียกโมเดลได้ถึง MAX_TOOL_ROUNDS + 1 ครั้ง — บวกสะสมไว้ทั้งตา แล้วคืน
+    # ให้คนเรียกไปลงตัวนับ **ห้ามนับตอนก่อนคุย** เพราะยังไม่รู้ว่าตานี้จะกินกี่ครั้ง
+    used = {"calls": 0, "tokens": 0}
+
     for _ in range(MAX_TOOL_ROUNDS):
         answer = await llm.chat_tools(messages, [tool])
+        used = _add(used, answer["usage"])
 
         if not answer["tool_calls"]:
             break
@@ -1100,7 +1107,9 @@ async def _turn(
         messages += llm.tool_exchange(answer["tool_calls"], _status(reports))
     else:
         # วนครบแล้วยังไม่ยอมพูด — บังคับให้พูดโดยไม่ให้ tool
-        answer = {"content": await llm.chat(messages), "tool_calls": []}
+        forced, spent = await llm.chat(messages)
+        used = _add(used, spent)
+        answer = {"content": forced, "tool_calls": []}
 
     text, asking_location, asking_photo = _buttons(answer["content"].strip())
     text = text or "ขอโทษค่ะ ช่วยเล่าอีกครั้งได้ไหมคะ"
@@ -1187,6 +1196,16 @@ async def _turn(
         "asking_photo": asking_photo,
         # ใบครบแล้วแต่เก็บไม่ลง คนเรียกควรบอกเขาว่ายังไม่เรียบร้อย อย่าปล่อยให้เชื่อว่าจบ
         "store_broke": store_broke,
+        # ตานี้กินไปเท่าไหร่จริง ๆ — คนเรียกเอาไปลง services/quota.py
+        "used": used,
+    }
+
+
+def _add(total: dict, more: dict) -> dict:
+    """บวก usage สองก้อน — ช่องที่หายไปนับเป็น 0 ไม่ใช่ error"""
+    return {
+        "calls": total["calls"] + (more.get("calls") or 0),
+        "tokens": total["tokens"] + (more.get("tokens") or 0),
     }
 
 

@@ -25,11 +25,36 @@ from app.core.config import BASE_DIR
 router = APIRouter(dependencies=[Depends(guard)])
 
 PAGE = BASE_DIR / "app" / "static" / "dashboard.html"
+VENDOR = (BASE_DIR / "app" / "static" / "vendor").resolve()
 
 
 @router.get("/dashboard")
 async def page() -> FileResponse:
     return FileResponse(PAGE)
+
+
+@router.get("/dashboard/vendor/{name:path}")
+async def vendor(name: str) -> FileResponse:
+    """Leaflet ที่เก็บไว้เองในเครื่อง — **เดิมโหลดจาก unpkg.com**
+
+    ไม่ใช่แค่ "แผนที่ไม่ขึ้น" ถ้าโหลดไม่ได้ สคริปต์ในหน้าเรียก `L.map()` ก่อน
+    `fetch()` ข้อมูล พอ `L` ไม่มีตัวตนมันโยน error ตรงนั้นแล้ว**ทั้งบล็อกที่เหลือ
+    ไม่ทำงานเลย** — ไม่ดึงข้อมูล ไม่ขึ้นรายการใบ ไม่มีตัวกรอง และ `.catch()`
+    ที่เตรียมข้อความ "ต่อกับเซิร์ฟเวอร์ไม่ได้" ไว้ก็ไม่มีวันได้ทำงาน
+    ชาวบ้านไม่เห็นหน้านี้ แต่คนที่เห็นคือทีมออกแบบเมืองบนจอโปรเจกเตอร์
+
+    เน็ตงานที่ช้า มี captive portal หรือบล็อก CDN = หน้าขาวทั้งหน้า
+    ไทล์แผนที่ยังมาจากข้างนอกอยู่ (เก็บเองไม่ได้) แต่ไทล์ไม่มาแค่พื้นหลังเทา
+    หมุดกับรายการใบยังอยู่ครบ
+
+    `{name:path}` เพราะ leaflet.css อ้าง `images/marker-icon.png` ต่อจากตัวมันเอง
+    เช็ค parents กันคนเดินย้อนขึ้นไปหยิบไฟล์นอกโฟลเดอร์
+    """
+    path = (VENDOR / name).resolve()
+    if not path.is_file() or VENDOR not in path.parents:
+        raise HTTPException(status_code=404, detail="ไม่มีไฟล์นี้")
+
+    return FileResponse(path)
 
 
 @router.get("/api/dashboard/reports")

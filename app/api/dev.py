@@ -1,19 +1,24 @@
-"""Endpoints for poking at things during development."""
+"""Endpoints for poking at things during development.
+
+**ไฟล์นี้ไม่ขึ้น prod** — main.py ต่อ router นี้เฉพาะตอน DEV_ROUTES_ENABLED=true
+ก่อนหน้านี้มันต่อทุกครั้งที่แอปเปิดโดยไม่มีอะไรกั้นเลย ซึ่งแปลว่าใครก็ตามที่รู้
+URL ดึงใบทั้งตารางพร้อมพิกัดบ้านชาวบ้านได้ ล้างใบที่คนกำลังเล่าค้างอยู่ได้
+และเผา quota โมเดลได้ฟรีสามทาง (issue #139)
+
+ยังล็อกซ้ำอีกชั้นด้วย `guard` ตั้งใจ — เครื่อง dev ที่เผลอเปิดพอร์ตออกเน็ต
+ไม่ควรกลายเป็นประตูเปิดโล่งเพราะสวิตช์ตัวเดียว ตัวที่เช็คสุขภาพย้ายไป api/health.py
+เพราะมันต้องเรียกได้เสมอ
+"""
 
 import asyncpg
 from fastapi import APIRouter, Depends
 from redis.asyncio import Redis
 
-from app.api.deps import get_db, get_redis
+from app.api.deps import get_db, get_redis, guard
 from app.clients import llm, storage
 from app.services import chat, draft, memory, survey
 
-router = APIRouter(prefix="/api")
-
-
-@router.get("/health")
-async def health(r: Redis = Depends(get_redis)):
-    return {"status": "OK", "redis": await r.ping()}
+router = APIRouter(prefix="/api", dependencies=[Depends(guard)])
 
 
 @router.get("/playground")

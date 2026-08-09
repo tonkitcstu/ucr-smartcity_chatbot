@@ -3,9 +3,15 @@
 ที่นี่ทำสองอย่างเท่านั้น: แปลงพารามิเตอร์จาก HTTP เป็นของธรรมดา แล้วยื่น
 ฟังก์ชันส่งของช่องทางแชทให้สมองใช้ ตรรกะว่าใครควรได้รับอยู่ที่ services/broadcast.py
 
-**ยังไม่มีใครล็อกประตูนี้** ใครยิง URL ถูกก็สั่งส่งข้อความหาชาวบ้านได้
-ตอนนี้ไม่ได้ต่อออกเน็ตเลยยังไม่เป็นเรื่อง — **ต้องปิดก่อนขึ้นของจริง**
-ระหว่างนี้ด่านที่มีคือ BROADCAST_ENABLED ซึ่งปิดอยู่โดยปริยาย
+**ล็อกทั้ง router แล้ว** (issue #139) ก่อนหน้านี้ใครยิง URL ถูกก็สั่งทักชาวบ้านได้
+ด่านเดียวที่มีคือ BROADCAST_ENABLED ซึ่ง **กั้นแค่ขาส่ง** — `/state` `/audience`
+`/log` กับหน้า `/dashboard/broadcast` เปิดอ่านได้ตลอดไม่ว่าสวิตช์จะเปิดหรือปิด
+แปลว่า**รายชื่อคนที่เราจะทักหลุดได้ทั้งที่คิดว่าปิดอยู่**
+
+สองด่านนี้ทำคนละหน้าที่ ยังอยู่ด้วยกันทั้งคู่:
+  guard              คุมว่า**ใคร**เข้าได้
+  BROADCAST_ENABLED  คุมว่า**ตอนนี้ยิงของจริงได้หรือยัง** — คนที่ผ่านด่านแรก
+                     มาแล้วก็ยังยิงไม่ได้ถ้าสวิตช์ปิด
 """
 
 import asyncpg
@@ -13,13 +19,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from redis.asyncio import Redis
 
-from app.api.deps import get_db, get_redis
+from app.api.deps import get_db, get_redis, guard
 from app.clients import audience
 from app.clients import line as line_client
 from app.core.config import BASE_DIR, BROADCAST_ENABLED
 from app.services import broadcast
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(guard)])
 
 PAGE = BASE_DIR / "app" / "static" / "broadcast.html"
 

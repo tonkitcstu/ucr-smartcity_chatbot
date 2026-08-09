@@ -2,17 +2,27 @@
 
 หน้าเว็บเป็นไฟล์เดียวใน static/ ที่ไปเรียก /api/dashboard/reports เอาเอง
 ไฟล์นี้จึงมีแค่ 3 ทาง: หน้าเว็บ, ข้อมูล, และรูป
+
+**ล็อกทั้ง router** (issue #139) ข้างในคือเรื่องที่ชาวบ้านเล่า + พิกัดบ้าน + รูปบ้าน
+ของจริง เคยเปิดโล่งให้ใครที่รู้ URL อ่านได้หมด
+
+คนเข้ามีสองพวก ด่านเดียวกันรับทั้งคู่ (ดู services/auth.py):
+  ทีมแดชบอร์ด  `Authorization: Bearer <jwt>` — เหมือนเดิมทุกอย่าง ไม่ต้องแก้ฝั่งเขา
+  คนในทีมเรา    Basic auth ที่เบราว์เซอร์เด้งให้เอง แล้วมันแนบให้ทุก request
+                ของ origin เดียวกัน **รวม `<img src>` ของรูปด้วย** หน้าเว็บจึง
+                ไม่ต้องแก้อะไร (ของเดิมบน main รูปบังคับ JWT เลยใช้ `<img>`
+                ตรง ๆ ไม่ได้ ต้อง fetch แล้วแปลงเป็น Object URL เอง)
 """
 
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
-from app.api.deps import get_db
+from app.api.deps import get_db, guard
 from app.clients import media, storage
 from app.core.config import BASE_DIR
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(guard)])
 
 PAGE = BASE_DIR / "app" / "static" / "dashboard.html"
 

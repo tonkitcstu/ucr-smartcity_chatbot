@@ -20,7 +20,7 @@ import asyncpg
 from redis.asyncio import Redis
 
 from app.clients import storage
-from app.services import draft, lock, survey
+from app.services import draft, lock, memory, survey
 
 log = logging.getLogger(__name__)
 
@@ -78,10 +78,13 @@ async def _rescue_session(
     r: Redis, pool: asyncpg.Pool, session_id: str, source: str = "rescued"
 ) -> int:
     saved = 0
+    last_id = None
+    left = 0
 
     for topic, report in (await draft.load_all(r, session_id)).items():
         if survey.missing(report):
             # ยังไม่มีเนื้อเรื่อง เก็บไปก็ไม่มีอะไรให้อ่าน ปล่อยหมดอายุไป
+            left += 1
             continue
 
         report_id = await storage.save_report(
@@ -94,6 +97,7 @@ async def _rescue_session(
         )
         await draft.remove(r, session_id, topic)
         saved += 1
+        last_id = report_id
         log.warning(
             "เก็บใบที่ยังไม่ครบไว้ทัน (%s) id=%s session=%s ขาด=%s",
             source,
@@ -101,6 +105,21 @@ async def _rescue_session(
             session_id,
             survey.next_goal(report),
         )
+
+    # **ปิดใบแล้วต้องล้างความจำด้วย** ทางปิดปกติใน survey.reply ทำอยู่แล้ว
+    # ทางนี้เดิมลบแต่ใบ ทิ้งความจำไว้ทั้งดุ้น ผลคือวันหลังเขากลับมาทัก โมเดล
+    # เห็นเรื่องที่เล่าจบไปแล้วเต็มประวัติ แต่ `_status()` บอกว่า "ยังไม่มีอะไร
+    # ในใบเลย" มันก็เก็บซ้ำ = **หมุดสองอันของเรื่องเดียว** อาการเดียวกับบั๊ก
+    # 29 ก.ค. เป๊ะ แค่มาคนละทาง
+    #
+    # ป้าย "เพิ่งคุยจบ" ก็ต้องปักด้วย ไม่งั้น broadcast จะทักเขาทันทีหลังเรื่อง
+    # ของเขาเพิ่งถูกกู้ไปเงียบ ๆ (`_hold()` ดูป้ายนี้ตัวเดียว)
+    #
+    # เงื่อนไข `not left` ยกมาจาก survey.reply ด้วยเหตุผลเดียวกัน — ปิดใบหนึ่ง
+    # แล้วล้างทั้งที่ยังมีอีกเรื่องคุยค้าง = ลบเรื่องที่เขากำลังเล่าอยู่
+    if saved and not left:
+        await memory.clear(r, session_id)
+        await draft.mark_done(r, session_id, last_id)
 
     return saved
 

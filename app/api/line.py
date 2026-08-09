@@ -26,7 +26,7 @@ from app.api.deps import get_db, get_redis
 from app.clients import line as line_client
 from app.clients import media
 from app.core.config import LINE_CHANNEL_SECRET
-from app.services import broadcast, burst, quota, survey, sweeper
+from app.services import broadcast, burst, lock, quota, survey, sweeper
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +39,13 @@ parser = WebhookParser(LINE_CHANNEL_SECRET)
 TROUBLE = (
     "ขอโทษนะคะ ตอนนี้ระบบทางนี้ขัดข้องอยู่ "
     "รบกวนพิมพ์มาใหม่อีกทีในอีกสักพักได้ไหมคะ 🙏"
+)
+
+# ตาก่อนหน้ายังทำไม่เสร็จ และรอจนหมดเวลาแล้ว — คนละเรื่องกับ TROUBLE
+# ระบบไม่ได้พัง แค่ยังไม่ว่าง บอกให้ตรงจะได้ไม่ต้องเดา
+BUSY = (
+    "ขอโทษนะคะ ข้อความก่อนหน้านี้เมืองยังตอบไม่เสร็จเลยค่ะ "
+    "รอสักครู่แล้วส่งข้อความเมื่อกี้มาใหม่อีกทีได้ไหมคะ 🙏"
 )
 
 # เรื่องเล่าจบครบแล้วแต่เก็บลงที่เก็บถาวรไม่ได้ — เขาต้องไม่เดินจากไปโดยเชื่อว่าเรียบร้อยแล้ว
@@ -222,6 +229,16 @@ async def answer(
         # มีของสดอยู่แล้วหรือยัง — วันละครั้ง ไม่ได้ยิงทุกตา
         if gate["zone"] == quota.GREEN:
             await quota.refresh_notice(r)
+    except lock.Busy:
+        # เดิมตัวนี้ตกลงไปกิน `except Exception` ข้างล่าง ชาวบ้านเลยเห็น
+        # "ระบบขัดข้อง" ทั้งที่ระบบไม่ได้ขัดข้องอะไรเลย แค่ตาก่อนหน้ายังไม่จบ
+        # และเราไม่มีทางแยกออกจาก log ด้วยว่าวันนั้นเป็นเพราะอะไร
+        #
+        # ตาปกติวัดได้ 8-12 วินาที ไม่มีทางชน WAIT_SECONDS=45 — จะชนก็ต่อเมื่อ
+        # ตาก่อนหน้าค้างผิดปกติ ซึ่งเกิดขึ้นได้จริงตอนโดน 429 รัว ๆ
+        log.warning("ตาก่อนหน้ายังไม่จบ รอไม่ไหวแล้ว session=%s", session)
+        await line_client.send(reply_token, session, BUSY)
+        return
     except Exception:
         # Redis ล่ม AI ไม่ตอบ ดิสก์เต็ม — อะไรก็ตามที่เราไม่ได้เตรียมไว้
         # ตรงนี้ทำงานหลังตอบ 200 ไปแล้ว ถ้าปล่อยให้ตายเงียบ **ชาวบ้านจะเห็นแค่ความเงียบ**

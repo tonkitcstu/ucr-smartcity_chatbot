@@ -5,3 +5,4 @@ python-dotenv
 redis
 asyncpg
 line-bot-sdk
+python-jose[cryptography]

@@ -36,7 +36,55 @@ REASONING_EFFORT = os.getenv("REASONING_EFFORT", "high").strip().lower()
 #
 # การขึ้นโค้ดกับการเริ่มทักคนจริงเป็นคนละการตัดสินใจกัน ตัวนี้ทำให้หยุดยิงได้
 # ด้วยการแก้ .env แล้วรีสตาร์ท ไม่ต้องถอยโค้ด
-BROADCAST_ENABLED = os.getenv("BROADCAST_ENABLED", "").lower() in ("1", "true", "yes")
+def _flag(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in ("1", "true", "yes")
+
+
+BROADCAST_ENABLED = _flag("BROADCAST_ENABLED")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ล็อกประตู — ก่อนหน้านี้ไม่มี route ไหนถูกล็อกเลยสักตัว (issue #139)
+#
+# **JWT ตรงนี้เราเป็นฝ่ายตรวจอย่างเดียว ไม่เคยเป็นคนออก** — คนออก token คือ
+# backend ของทีมแดชบอร์ด เราถือกุญแจดอกเดียวกันแล้วแกะเอง นี่คือของเดิมจาก
+# `app/utils/auth.py` บน branch main **ชื่อ env ตรงกับของเดิมทุกตัว ตั้งใจ**
+# เพื่อให้ทีมหน้าบ้านเรียกแบบเดิมได้โดยไม่ต้องแก้อะไรเลย
+#
+# ของเดิมบน main สั่ง raise ตอน import ถ้าไม่มี SECRET_KEY = แอปไม่ขึ้น
+# **ที่นี่ทำแบบนั้นไม่ได้** เพราะแอปตัวเดียวกันนี้แบก LINE webhook อยู่ด้วย
+# ลืมตั้งรหัสแดชบอร์ดแล้วบอททั้งชุมชนเงียบ = แลกผิดของ ด่านจึงตอบ 503 แทน
+# บอทเดินต่อ แดชบอร์ดปิดสนิท (ดู services/auth.py)
+SECRET_KEY = os.getenv("SECRET_KEY")
+ALGORITHM = os.getenv("ALGORITHM", "HS256")
+
+# หน้าเว็บสองหน้าของเราเองเข้าด้วยรหัสผ่าน ไม่ใช่ JWT — คนกดคือคนในทีมที่เปิด
+# จากเบราว์เซอร์ ไม่มี backend ไหนออก token ให้ ใช้ HTTP Basic เพราะเบราว์เซอร์
+# เด้งช่องกรอกให้เอง แล้วแนบรหัสไปกับ **ทุก** request ของ origin เดียวกันรวม
+# `<img src>` ด้วย — หน้าเว็บจึงไม่ต้องแก้ JS สักบรรทัด
+#
+# (ของเดิมบน main รูปต้องแนบ JWT เลยใช้ `<img>` ตรง ๆ ไม่ได้ ต้อง fetch แล้ว
+#  แปลงเป็น Object URL เอง ดู app/static/viewer.html บน main — ทางนี้ไม่มีปัญหานั้น)
+DASHBOARD_USER = os.getenv("DASHBOARD_USER", "ucr")
+DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD")
+
+# เบราว์เซอร์ของทีมแดชบอร์ดอยู่คนละ origin กับเรา ไม่ประกาศไว้ตรงนี้เขายิงไม่ถึง
+# ค่าใน DEFAULT ยกมาจาก app/cors.py บน main
+CORS_ORIGINS = [
+    origin.strip().rstrip("/")
+    for origin in (
+        os.getenv("CORS_ORIGINS")
+        or "http://localhost:4200,http://127.0.0.1:4200,https://dev-ucr-dashboard.m3chok.com"
+    ).split(",")
+    if origin.strip()
+]
+
+# **ประตูที่กว้างที่สุดในโปรเจกต์** — api/dev.py เคยต่อเข้า /api ทุกครั้งที่แอปเปิด
+# ไม่มี flag กั้นเลย ข้างในมี GET /api/reports (ใบทั้งตารางพร้อมพิกัดบ้าน),
+# DELETE /api/survey/draft (ล้างใบที่คนกำลังเล่าค้าง) และสามทางที่เผา quota โมเดลได้ฟรี
+#
+# ตัวนี้คุม /docs กับ /openapi.json ด้วย — สองอันนั้นแจกแผนที่ทุก route ให้คนอ่าน
+DEV_ROUTES_ENABLED = _flag("DEV_ROUTES_ENABLED")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

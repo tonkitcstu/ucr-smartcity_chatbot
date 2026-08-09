@@ -30,13 +30,15 @@ async def lifespan(app: FastAPI):
         print("app closed")
 
 
-# /docs กับ /openapi.json แจกแผนที่ทุก route ให้คนที่ยังไม่มีกุญแจอ่าน
-# เปิดเฉพาะเครื่อง dev ตัวเดียวกับที่เปิด api/dev.py
+# **ปิดของที่ FastAPI แถมมาให้ทิ้งทั้งหมด** /docs /redoc /openapi.json ของเดิม
+# แจกแผนที่ทุก route ทุกพารามิเตอร์ให้คนที่ไม่มีกุญแจอ่าน และตรงนี้ล็อกมันไม่ได้
+# (main.py มี route เองไม่ได้ — กฎข้อ 4) ของทดแทนที่มีกุญแจอยู่ใน api/dev.py
+# ที่ /api/docs กับ /api/openapi.json ขึ้นพร้อม DEV_ROUTES_ENABLED เหมือนเดิม
 app = FastAPI(
     lifespan=lifespan,
-    docs_url="/docs" if DEV_ROUTES_ENABLED else None,
+    docs_url=None,
     redoc_url=None,
-    openapi_url="/openapi.json" if DEV_ROUTES_ENABLED else None,
+    openapi_url=None,
 )
 
 # เบราว์เซอร์ของทีมแดชบอร์ดอยู่คนละ origin กับเรา ไม่ประกาศไว้เขายิงไม่ถึง

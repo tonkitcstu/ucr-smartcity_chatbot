@@ -1139,12 +1139,30 @@ async def _turn(
     # ตาข่าย `_invites_pin` ข้างล่างไม่ช่วย เพราะข้อความรอบสองไม่มีคำว่า "ปุ่ม"
     # **ไม่มีพิกัด = ไม่ขึ้นหมุด = ใบนั้นไม่มีประโยชน์กับทีมออกแบบเมือง**
     # และปุ่มตำแหน่งไม่มีทางอื่นให้เขาเลย (ดู _PIN_WORDS)
+    # **การทอยเป็นของแถม มันต้องพังเองได้โดยไม่ลากทั้งตาลงไป** ตรงนี้อยู่หลัง
+    # tool loop แปลว่าของที่เขาเล่ามาลง draft ไปแล้ว และข้างล่างยังมีงานปิดใบที่
+    # ครบแล้วลงที่เก็บถาวรรออยู่ (ดูบรรทัด ready(reports)) ถ้าปล่อยให้ call นี้
+    # โยนออกไป ตาทั้งตาจะไปตกที่ except Exception ใน api/line.py = ชาวบ้านได้
+    # "ระบบขัดข้อง" **และใบที่ครบแล้วไม่ได้ปิดในตานั้น** ทั้งที่ก่อนจะมีการทอย
+    # ตาเดียวกันนี้จบได้ตามปกติ แค่จบด้วยคำขอโทษ
+    #
+    # จังหวะที่ llm.chat พังคือ 429 กับ timeout ซึ่งคือจังหวะเดียวกับที่
+    # clients/llm.py ปิด retry ไว้เพราะไม่อยากให้ความล้มเหลวขยายตัว ปล่อยไว้
+    # เท่ากับสอง commit ในก้อนเดียวกันเดินสวนกัน
+    #
+    # กลืนแล้วตกคำขอโทษ = กลับไปเป็นพฤติกรรมเดิมเป๊ะ ไม่แย่ลงกว่าตอนไม่มีการทอย
+    # ลีลาเดียวกับของแถมตัวอื่นในโปรเจกต์: show_loading, refresh_notice,
+    # และการเก็บ transcript ข้างล่าง — ทุกตัวกลืน error ของตัวเอง
     if not text and not begged:
-        forced, spent = await llm.chat(messages)
-        used = _add(used, spent)
-        text, more_location, more_photo = _buttons(forced.strip())
-        asking_location = asking_location or more_location
-        asking_photo = asking_photo or more_photo
+        try:
+            forced, spent = await llm.chat(messages)
+        except Exception:
+            log.warning("ทอยข้อความใหม่ไม่สำเร็จ ตกคำขอโทษตามเดิม", exc_info=True)
+        else:
+            used = _add(used, spent)
+            text, more_location, more_photo = _buttons(forced.strip())
+            asking_location = asking_location or more_location
+            asking_photo = asking_photo or more_photo
 
     text = text or "ขอโทษค่ะ ช่วยเล่าอีกครั้งได้ไหมคะ"
 

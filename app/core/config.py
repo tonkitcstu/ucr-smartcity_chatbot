@@ -69,13 +69,18 @@ DASHBOARD_USER = os.getenv("DASHBOARD_USER", "ucr")
 DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD")
 
 # เบราว์เซอร์ของทีมแดชบอร์ดอยู่คนละ origin กับเรา ไม่ประกาศไว้ตรงนี้เขายิงไม่ถึง
-# ค่าใน DEFAULT ยกมาจาก app/cors.py บน main
+#
+# **ไม่ตั้ง = ไม่อนุญาต origin ไหนเลย ไม่ใช่ค่าตั้งต้นสำเร็จรูป** เดิมตกมาเป็น
+# `localhost:4200` ตามของบน main ซึ่งบน prod แปลว่า **หน้าเว็บอะไรก็ได้ที่
+# ใครสักคนในทีมเปิดที่ localhost:4200 ของเครื่องตัวเอง ยิงมาอ่านใบทั้งตาราง
+# พร้อมพิกัดบ้านชาวบ้านได้** โดยยืมรหัส Basic ที่เบราว์เซอร์เขาจำไว้ให้
+# (เราเปิด allow_credentials อยู่ ไม่งั้นทีมแดชบอร์ดแนบ Authorization ไม่ได้)
+#
+# หน้าเว็บสองหน้าของเราเองไม่ได้ใช้ CORS อยู่แล้ว เพราะ origin เดียวกับ API
+# ว่างไว้จึงไม่กระทบเรา กระทบแค่คนที่ยิงข้าม origin ซึ่งควรต้องประกาศตัวก่อน
 CORS_ORIGINS = [
     origin.strip().rstrip("/")
-    for origin in (
-        os.getenv("CORS_ORIGINS")
-        or "http://localhost:4200,http://127.0.0.1:4200,https://dev-ucr-dashboard.m3chok.com"
-    ).split(",")
+    for origin in (os.getenv("CORS_ORIGINS") or "").split(",")
     if origin.strip()
 ]
 

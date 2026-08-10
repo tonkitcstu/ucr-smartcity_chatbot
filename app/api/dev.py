@@ -11,7 +11,10 @@ URL ดึงใบทั้งตารางพร้อมพิกัดบ�
 """
 
 import asyncpg
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.openapi.utils import get_openapi
+from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
 
 from app.api.deps import get_db, get_redis, guard
@@ -19,6 +22,33 @@ from app.clients import llm, storage
 from app.services import chat, draft, memory, survey
 
 router = APIRouter(prefix="/api", dependencies=[Depends(guard)])
+
+
+# ---- แผนที่ route ----------------------------------------------------------
+#
+# **ย้ายมาไว้ในนี้เพราะของเดิมไม่มีกุญแจ** ตอนแรกปิด/เปิดด้วย `docs_url` กับ
+# `openapi_url` ใน main.py ซึ่งคุมได้แค่ "มีหรือไม่มี" ไม่ได้คุมว่า "ใครดูได้"
+# ผลคือบนเครื่องที่เปิด DEV_ROUTES_ENABLED ไว้ ทุก route ในไฟล์นี้ตอบ 401
+# แต่ /openapi.json แจกชื่อทุกทาง ทุกพารามิเตอร์ ให้คนที่ไม่มีกุญแจอ่านฟรี
+# — ซึ่งคือขั้นตอนแรกของการหาว่าจะยิงตรงไหน เหตุผลเรื่อง "ล็อกซ้ำอีกชั้น"
+# ข้างบนใช้กับสองทางนี้เหมือนกันทุกประการ แค่ตอนนั้นลืมแปะ
+#
+# อยู่ใต้ prefix /api เลยกลายเป็น /api/docs กับ /api/openapi.json
+# (main.py มี route เองไม่ได้ — กฎข้อ 4) เบราว์เซอร์แนบ Basic ให้ทั้งคู่เอง
+# เพราะ origin เดียวกัน Swagger UI จึงยังใช้ได้ตามปกติ
+
+
+@router.get("/openapi.json", include_in_schema=False)
+async def openapi(request: Request):
+    app = request.app
+    return JSONResponse(
+        get_openapi(title=app.title, version=app.version, routes=app.routes)
+    )
+
+
+@router.get("/docs", include_in_schema=False)
+async def docs():
+    return get_swagger_ui_html(openapi_url="/api/openapi.json", title="ucr — dev")
 
 
 @router.get("/playground")

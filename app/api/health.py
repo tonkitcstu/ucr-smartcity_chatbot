@@ -16,6 +16,9 @@ from app.api.deps import get_redis
 router = APIRouter(prefix="/api")
 
 
-@router.get("/health")
+# **ต้องรับ HEAD ด้วย ไม่ใช่แค่ GET** ตัวเช็คสุขภาพจำนวนมากยิง HEAD มาเป็นค่าตั้งต้น
+# `@router.get` ของ FastAPI ไม่ได้แถม HEAD ให้เหมือน route ดิบของ Starlette
+# ตอบ 405 กลับไป = มอนิเตอร์อ่านว่าแอปตาย ซึ่งคือผลที่ไฟล์นี้มีไว้กันพอดี
+@router.api_route("/health", methods=["GET", "HEAD"])
 async def health(r: Redis = Depends(get_redis)):
     return {"status": "OK", "redis": await r.ping()}

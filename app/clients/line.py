@@ -145,10 +145,16 @@ async def download_image(message_id: str) -> bytes:
         return await AsyncMessagingApiBlob(api_client).get_message_content(message_id)
 
 
-async def show_loading(chat_id: str, seconds: int = 20) -> None:
+async def show_loading(chat_id: str, seconds: int = 60) -> None:
     """จุดสามจุดกระพริบระหว่างรอ AI คิด — ได้เฉพาะแชท 1:1 กลุ่มใช้ไม่ได้
 
     ล้มเหลวได้โดยไม่เป็นไร มันเป็นแค่ของประดับ ห้ามทำให้ข้อความจริงไม่ถูกส่ง
+
+    **เดิม 20 วินาที ซึ่งสั้นกว่าตาที่ช้าจริง ๆ** ตาปกติ 8-12 วินาทีก็จริง
+    แต่ตาที่มี tool หลายรอบไปได้ถึง 80 (4 call × timeout 20 ดู clients/llm.py)
+    จุดหายไปแล้วบอทยังไม่ตอบ = เขาอ่านว่าเครื่องค้าง แล้วพิมพ์ซ้ำ ซึ่งไปติดคิว
+    lock ต่ออีก ยาวไปกันใหญ่ ยืดเป็นเพดานสูงสุดที่ LINE ให้ (60) ไปเลย
+    มันดับเองตอนข้อความจริงถึง ตั้งเผื่อไว้จึงไม่มีข้อเสีย
     """
     try:
         async with AsyncApiClient(configuration) as api_client:

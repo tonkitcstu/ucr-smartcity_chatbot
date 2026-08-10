@@ -41,9 +41,32 @@ MODEL = "gemini-flash-lite-latest"
 # และ 98.6% ที่ low เป็น prompt ล้วน ๆ prompt caching จึงคุ้มกว่าการลด effort มาก
 EFFORT = {"reasoning_effort": REASONING_EFFORT}
 
+# **ค่าตั้งต้นของ SDK ผิดกับที่นี่สองตัว และมันไม่บอกใครเลย** — openai 2.53
+# ตั้งมาให้ลองใหม่เอง 2 ครั้ง (`DEFAULT_MAX_RETRIES = 2`) และรออ่านได้ถึง
+# 600 วินาที ทั้งสองค่าเหมาะกับสคริปต์ที่รันคนเดียว ไม่ใช่บอทที่คนทั้งชุมชนใช้
+#
+# **วัดของจริง 9 ส.ค. 69** คีย์ที่ใช้อยู่เป็น free tier เพดานคือ
+# **15 request ต่อนาที ต่อทั้งโปรเจกต์** (ไม่ใช่ต่อคน) และตอนโดน 429
+# Google ส่ง `retryDelay: 49s` กลับมา ค่าตั้งต้นสองตัวนั้นแปลว่า
+#
+#   ลองใหม่ 2 ครั้ง  →  เรียกหนึ่งทีไหม้โควตาสามที 429 ไม่ได้ทำให้ช้าลง
+#                       มันเร่งให้หมดเร็วขึ้นสามเท่า แล้วบอทเงียบทั้งห้อง
+#   เชื่อ retryDelay →  ตาเดียวค้างร้อยวินาที เกินทั้งอายุ lock (90 วิ) และ
+#                       อายุ reply token ของ LINE (60 วิ) ในหอบเดียว
+#                       lock หมดอายุคาตา = บั๊กหมุดซ้ำ 29 ก.ค. กลับมา
+#                       (ดู services/lock.py)
+#
+# จึงปิดการลองใหม่ทิ้ง — ล้มเร็วดีกว่าลากคนทั้งห้องลงไปด้วย และตัด timeout ให้
+# หนึ่งตา (มากสุด MAX_TOOL_ROUNDS + 1 = 4 call) ยังจบก่อน lock หมดอายุ
+# 4 × 20 = 80 < 90 ตาปกติวัดได้ 8-12 วินาทีทั้งตา 20 วินาทีต่อ call จึงเผื่อไว้เยอะแล้ว
+#
+# **วันเปิด billing แล้วกลับมาคิดใหม่** เพดานต่อนาทีหายไปเมื่อไหร่ การลองใหม่
+# สักครั้งจะกลับมาคุ้มกว่าการล้ม แต่ตอนนี้ยังไม่ใช่
 client = AsyncOpenAI(
     api_key=API_KEY,
     base_url=API_ENDPOINT,
+    max_retries=0,
+    timeout=20.0,
 )
 
 
@@ -92,6 +115,11 @@ async def chat(messages: list[dict]) -> tuple[str, dict]:
     """Same model as the playground, but takes a full message history.
 
     คืน `(ข้อความ, usage)` — ตัวหลังเอาไปให้ `services/quota.py` นับ
+
+    **`or ""` ตรงนั้นห้ามหาย** ฝั่ง Google คืน `content: None` มาได้เป็นปกติ
+    (คิดแล้วไม่พูด) `chat_tools` กันไว้อยู่แล้ว ตัวนี้เดิมไม่ได้กัน คนที่รับไปคือ
+    `survey._turn` ซึ่งเรียก `.strip()` ต่อทันที ผลคือ `AttributeError` แล้ว
+    ชาวบ้านเห็น "ระบบขัดข้อง" ทั้งที่ตานั้นเก็บของลงใบเรียบร้อยไปแล้ว
     """
 
     completion = await client.chat.completions.create(
@@ -100,7 +128,7 @@ async def chat(messages: list[dict]) -> tuple[str, dict]:
         extra_body=EFFORT,
     )
 
-    return completion.choices[0].message.content, _usage(completion)
+    return completion.choices[0].message.content or "", _usage(completion)
 
 
 def _no_nulls(value):

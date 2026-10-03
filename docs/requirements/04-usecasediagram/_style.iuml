@@ -1,0 +1,14 @@
+' หน้าตาที่ทุกภาพใช้ร่วมกัน — สีเหลือง = happy path (S1–S8)
+left to right direction
+skinparam defaultFontName "Thonburi"
+skinparam shadowing false
+skinparam usecase {
+  BackgroundColor #FFFFFF
+  BorderColor #555555
+  BackgroundColor<<happy>> #FFF1B8
+  BorderColor<<happy>> #B8860B
+}
+skinparam rectangle {
+  BorderColor #888888
+}
+hide stereotype

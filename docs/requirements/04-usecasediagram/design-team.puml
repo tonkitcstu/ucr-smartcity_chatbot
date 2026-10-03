@@ -1,0 +1,22 @@
+@startuml design-team
+!include _style.iuml
+title ทีมออกแบบเมือง
+
+actor "ระบบของทีมออกแบบ" as D
+
+rectangle "API ให้ทีมออกแบบ" {
+  usecase "ดึงรายงานผ่าน API เดิม\n[S8]" as LEGACY <<happy>>
+  usecase "ดึงเฉพาะรายงานที่เปลี่ยน\nนับจากครั้งล่าสุด\n[S21]" as DELTA
+  usecase "ดูรายการ tag ทั้งหมด\n[S22]" as TAGS
+}
+
+D -- LEGACY
+D -- DELTA
+D -- TAGS
+
+note as RULES
+  รายงานมีสรุป tag คำพูดเต็ม (S7)
+  และช่วงอายุ หมู่บ้านของผู้แจ้ง (S19)
+  ไม่มีชื่อหรือ LINE ID ของผู้แจ้ง
+end note
+@enduml

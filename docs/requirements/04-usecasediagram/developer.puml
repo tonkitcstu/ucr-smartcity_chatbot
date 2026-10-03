@@ -1,0 +1,24 @@
+@startuml developer
+!include _style.iuml
+title นักพัฒนา
+
+actor "นักพัฒนา" as T
+
+rectangle "สำหรับนักพัฒนา" {
+  usecase "ดูบทสนทนาและข้อมูล\nที่ส่งให้ AI ย้อนหลัง\n[S23]" as LOG
+  usecase "ได้แจ้งเตือน\nเมื่อระบบขัดข้อง\n[S24]" as ALERT
+  usecase "ดูการใช้ token\nและโควตา\n[S26]" as TOKEN
+}
+
+T -- LOG
+T -- ALERT
+T -- TOKEN
+
+note as RULES
+  S25 เปลี่ยนผู้ให้บริการ AI ผ่าน .env
+  S27 รันทั้งระบบบนเครื่องตัวเองได้
+  S28 ชุดวัดผล prompt
+  S29 README สำหรับคนใหม่
+  S30 ค่า AI ไม่เกินเพดาน แม้มีคนส่งข้อความรัว ๆ
+end note
+@enduml

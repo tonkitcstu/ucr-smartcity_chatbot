@@ -1,0 +1,42 @@
+@startuml reporter
+!include _style.iuml
+title ผู้แจ้งในชุมชน
+
+actor "ผู้แจ้งในชุมชน" as R
+actor "ผู้ให้บริการ AI\n<<ระบบภายนอก>>" as AI
+
+rectangle "แชตใน LINE OA" {
+  usecase "ยอมรับเงื่อนไข PDPA\n[S1]" as PDPA <<happy>>
+  usecase "เล่าปัญหาแถวบ้าน\n[S2 S13 S15 S16 S17 S18]" as TELL <<happy>>
+  usecase "ส่งรูปประกอบ\n[S3]" as IMG <<happy>>
+  usecase "บอกตำแหน่ง\n[S4 S14]" as LOC <<happy>>
+  usecase "ได้ข้อความสำรอง\nตอน AI ใช้ไม่ได้\n[S6]" as FALLBACK <<happy>>
+  usecase "ได้เบอร์ฉุกเฉิน\n[S9]" as SOS
+  usecase "สร้างรายงาน\n[S5 S7 S19]" as REPORT <<happy>>
+  usecase "ขอหยุดรับข้อความ\nที่บอททักมาก่อน\n[S11]" as OPTOUT
+  usecase "ขอลบข้อมูลตัวเอง\n[S12]" as DELREQ
+  usecase "บอททักชวนคุย\n[S20]" as NUDGE
+}
+
+R -- PDPA
+R -- TELL
+R -- OPTOUT
+R -- DELREQ
+R -- NUDGE
+
+TELL <.. IMG : <<extend>>
+TELL <.. LOC : <<extend>>
+TELL <.. FALLBACK : <<extend>>
+TELL <.. SOS : <<extend>>
+TELL ..> REPORT : <<include>>
+
+TELL -- AI
+REPORT -- AI
+NUDGE -- AI
+
+note as RULES
+  S1 ก่อนกดยอมรับ ข้อความไม่ถูกเก็บ และไม่ส่งให้ AI
+  S10 ไม่เปิดเรื่องให้คนอื่นเห็น ไม่รับเรื่องในแชตกลุ่ม
+  S12 คำขอลบไปรอแอดมินยืนยัน (S35)
+end note
+@enduml

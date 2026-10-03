@@ -1,0 +1,31 @@
+@startuml admin
+!include _style.iuml
+title แอดมิน
+
+actor "แอดมิน" as A
+actor "คนรับช่วง\n(ไม่ใช่นักพัฒนา)" as H
+
+rectangle "หน้าจัดการ" {
+  usecase "เข้าสู่ระบบ\n[S34]" as LOGIN
+  usecase "ดูสถานะบอท\nฐานข้อมูล AI\n[S32]" as STATUS
+  usecase "ดูรายการรายงาน\nกรองวันที่ / แผนที่\n[S31 S33]" as LIST
+  usecase "ยืนยันลบข้อมูล\nให้ครบทุกส่วน\n[S35]" as DELETE
+  usecase "เปิด / ปิด\nการทักชวนคุย\n[S36]" as TOGGLE
+  usecase "พิมพ์ข้อความ\nส่งหาชุมชนเอง\n[S37]" as BROADCAST
+  usecase "ให้ / เพิกถอน\nสิทธิ์ API\n[S38]" as GRANT
+}
+
+H --|> A
+A -- LOGIN
+A -- STATUS
+A -- LIST
+A -- DELETE
+A -- TOGGLE
+A -- BROADCAST
+A -- GRANT
+
+note as RULES
+  ทุกงานต้องเข้าสู่ระบบก่อน (S34)
+  S39 คนรับช่วงทำได้ทุกอย่างผ่านหน้าจอ ไม่ต้องแตะโค้ด
+end note
+@enduml

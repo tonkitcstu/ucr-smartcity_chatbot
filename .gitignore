@@ -50,9 +50,6 @@ backup*.sql
 local/
 .agent-workspace/
 
-# เอกสารนำเสนอ/บรีฟของค่าย ไม่ใช่ของโปรเจกต์นี้ — เก็บไว้บนเครื่อง ไม่ต้องขึ้น git
-docs/
-
 # Runtime blobs — รูปที่ชาวบ้านส่งมา + บทสนทนาต้นฉบับ
 # ของจริงของชาวบ้าน ห้ามขึ้น git (วันย้ายขึ้น S3 โฟลเดอร์นี้จะหายไปเอง)
 storage/
@@ -103,3 +100,6 @@ Thumbs.db
 *.db
 *.sqlite3
 dump.rdb
+
+# ที่ทำงานของ AI ระหว่างทำ requirement — อยู่บนเครื่องเท่านั้น
+docs/requirements/ai-workspace.md

@@ -1,0 +1,91 @@
+@startuml happy-path
+' happy path: เพิ่มเพื่อน → เล่า → รายงาน → ทีมออกแบบดึงไป (S1–S8)
+' กรณีพัง (AI ล่ม, crash, ตัด stream) ค่อยเพิ่มตอน dev
+skinparam defaultFontName "Thonburi"
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+
+title Happy path — sequence
+
+actor "ผู้แจ้ง" as U
+participant "LINE" as LINE
+participant "Controller" as C
+database "PSQL" as PG
+queue "Redis\nqueue · buffer · session" as R
+participant "Worker" as W
+participant "Sweeper" as S
+participant "AI" as AI
+actor "ระบบทีมออกแบบ" as D
+
+== PDPA [S1] ==
+U -> LINE : เพิ่มเพื่อน
+LINE -> C : follow event
+C -> LINE : reply การ์ด PDPA (ถ้อยคำตายตัว TC7)
+U -> LINE : กดยอมรับ
+LINE -> C : postback
+C -> PG : pdpa_accepted_at = now
+C --> LINE : 200
+
+== คุย [S2 S3 S4] ==
+U -> LINE : "น้ำท่วมหน้าบ้าน"
+LINE -> C : message event (replyToken 1)
+C -> PG : สร้างใบ (ON CONFLICT DO NOTHING)\nแล้วค้นใบที่เปิดอยู่
+C -> PG : บันทึกข้อความ (ยังไม่ตอบ)\n+ line_event_id
+C -> R : ต่อท้าย buffer + เวลาล่าสุด
+C -> R : state IDLE → **BUFFERING**
+C -> R : ใส่งานคุย (เฉพาะตอนเปลี่ยนจาก IDLE)
+C --> LINE : 200
+
+U -> LINE : ส่งรูป (ภายใน 3 วิ)
+LINE -> C : message event (replyToken 2)
+C -> PG : สร้างใบ → ชน → ได้ใบเดิม
+C -> PG : บันทึกข้อความ (ยังไม่ตอบ)\n+ line_event_id + line_message_id
+C -> R : ต่อท้าย buffer + เวลาล่าสุด
+note right of C : state เป็น BUFFERING อยู่แล้ว\n→ ไม่ใส่งานซ้ำ
+C --> LINE : 200
+
+W -> R : หยิบงานคุย
+W -> W : รอจนเงียบ 3 วิ
+W -> R : state BUFFERING → **PROCESS**
+W -> LINE : ดาวน์โหลดรูปด้วย line_message_id [TC9]
+W -> PG : attachment (message_id, path)\nไฟล์อยู่บนดิสก์
+W -> R : อ่าน session (ที่คุยมา) + buffer (ข้อความ + รูป)
+W -> AI : ตัวคุย (stream)
+AI --> W : คำตอบ
+W -> PG : ai_calls (ตัวคุย: request, คำตอบดิบ, token)
+W -> LINE : reply ด้วย replyToken 2 (ล่าสุด)
+LINE -> U : คำตอบของบอท
+W -> PG : ข้อความ → ตอบแล้ว
+W -> R : ล้าง buffer, ต่อท้าย session (ข้อความ + คำตอบ)
+W -> R : buffer ว่าง → state PROCESS → **IDLE**
+
+note over U, AI
+  เล่าต่อ / ปักหมุด = วนส่วนนี้ซ้ำ
+  (นอก happy path: ข้อความเข้าตอน PROCESS → ตัด stream, state → BUFFERING)
+end note
+
+== ปิดใบ และทำรายงาน [S7] ==
+note over U : เงียบไปเกิน n (1–2 ชม.)\nsession ใน Redis หมดอายุพร้อมกัน
+S -> PG : หาใบเปิดที่ last_message_at เกิน n
+S -> PG : ใบ → ปิด
+S -> R : ใส่งานวิเคราะห์
+W -> R : หยิบงานวิเคราะห์
+W -> PG : อ่านบทสนทนาทั้งใบ
+W -> AI : ตัววิเคราะห์
+AI --> W : รายงาน 0..n ใบ (สรุป tag พิกัด รูปที่เลือก)
+W -> PG : ai_calls (ตัววิเคราะห์: request, คำตอบดิบ, token)
+W -> PG : บันทึกรายงาน 0..n ใบ
+W -> PG : attachment.report_id = รายงานที่เลือกรูปนั้น
+W -> PG : ใบ → วิเคราะห์แล้ว
+
+note over U, W #FFF1B8
+  S5 (บอทบอกในบทสนทนาว่าบันทึกแล้ว) ยังไม่มีในภาพ
+  S17 (ได้รายงานภายใน 5 นาที) ขัดกับ n = 1–2 ชม.
+  รายงานเกิดหลังผู้แจ้งเงียบไปแล้ว — ค้างตัดสินตอน dev
+end note
+
+== ทีมออกแบบดึงรายงาน [S8] ==
+D -> C : GET /api/dashboard/reports (JWT)
+C -> PG : อ่านรายงาน
+C --> D : รายงานในรูปแบบเดิม ไม่มี LINE ID
+@enduml

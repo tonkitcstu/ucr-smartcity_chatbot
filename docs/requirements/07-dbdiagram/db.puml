@@ -1,0 +1,127 @@
+@startuml db
+' ตารางเท่าที่ happy path เรียกใช้ (S1–S8) + บันทึกการเรียก AI (S23 S26)
+' nudge, admin, คำขอลบ — ค่อยเพิ่มเมื่อถึง story นั้น
+' system log (Redis ล่ม, ดาวน์โหลดรูปไม่ได้ ฯลฯ) อยู่ใน stdout ไม่ใช่ตาราง
+skinparam defaultFontName "Thonburi"
+skinparam shadowing false
+skinparam linetype ortho
+hide circle
+hide empty methods
+
+title DB — PSQL
+
+entity users {
+  * user_id : uuid <<PK>>
+  --
+  * line_user_id : text <<unique>>
+  pdpa_accepted_at : timestamptz
+  * created_at : timestamptz
+}
+
+entity sessions {
+  * session_id : uuid <<PK>>
+  --
+  * user_id : uuid <<FK>>
+  * status : เปิด | ปิด | วิเคราะห์แล้ว | วิเคราะห์ไม่สำเร็จ
+  * started_at : timestamptz
+  * last_message_at : timestamptz
+  closed_at : timestamptz
+}
+
+entity messages {
+  * message_id : uuid <<PK>>
+  --
+  * session_id : uuid <<FK>>
+  line_event_id : text <<unique>>
+  line_message_id : text
+  * role : ผู้แจ้ง | บอท
+  * type : text | image | location | sticker
+  content : text
+  lat : float
+  lng : float
+  * status : ยังไม่ตอบ | ตอบแล้ว
+  * created_at : timestamptz
+}
+
+entity attachments {
+  * attachment_id : uuid <<PK>>
+  --
+  * message_id : uuid <<FK>>
+  report_id : uuid <<FK>> (null จนตัววิเคราะห์เลือก)
+  * type : image
+  * file_path : text
+  desc : text (ว่างไว้ก่อน)
+  * created_at : timestamptz
+}
+
+entity reports {
+  * report_id : uuid <<PK>>
+  --
+  * session_id : uuid <<FK>>
+  * ai_config_id : uuid <<FK>>
+  tags : text[]
+  lat : float
+  lng : float
+  * desc : text
+  * started_at : timestamptz
+  * created_at : timestamptz
+}
+
+entity ai_calls {
+  * ai_call_id : uuid <<PK>>
+  --
+  * session_id : uuid <<FK>>
+  * ai_config_id : uuid <<FK>>
+  * kind : ตัวคุย | ตัววิเคราะห์
+  * request : jsonb
+  response : text (ดิบ)
+  input_tokens : int
+  output_tokens : int
+  * status : สำเร็จ | error | ถูกตัด stream
+  error : text
+  * created_at : timestamptz
+}
+
+entity ai_configs {
+  * ai_config_id : uuid <<PK>>
+  --
+  * chat_model_id : uuid <<FK>>
+  * chat_prompt_id : uuid <<FK>>
+  * analyzer_model_id : uuid <<FK>>
+  * analyzer_prompt_id : uuid <<FK>>
+  * created_at : timestamptz
+}
+
+entity models {
+  * model_id : uuid <<PK>>
+  --
+  * provider : text
+  * name : text
+  desc : text
+  * created_at : timestamptz
+}
+
+entity prompts {
+  * prompt_id : uuid <<PK>>
+  --
+  * prompt : text
+  desc : text
+  * created_at : timestamptz
+}
+
+users ||--o{ sessions
+sessions ||--o{ messages
+messages ||--o{ attachments
+sessions ||--o{ reports : 0..n ตัววิเคราะห์เลือก
+reports |o--o{ attachments
+sessions ||--o{ ai_calls
+ai_configs ||--o{ ai_calls
+ai_configs ||--o{ reports
+prompts ||--o{ ai_configs : ตัวคุย
+prompts ||--o{ ai_configs : ตัววิเคราะห์
+models ||--o{ ai_configs : ตัวคุย
+models ||--o{ ai_configs : ตัววิเคราะห์
+
+
+
+@enduml

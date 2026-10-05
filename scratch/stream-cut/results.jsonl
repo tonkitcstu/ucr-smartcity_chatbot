@@ -1,5 +1,0 @@
-{"provider": "typhoon", "model": "typhoon-v2.5-30b-a3b-instruct", "at": "2026-10-04T17:23:23", "mode": "full", "chunks_received": 1332, "chars_received": 2280, "usage": null, "seconds": 8.73}
-{"provider": "typhoon", "model": "typhoon-v2.5-30b-a3b-instruct", "at": "2026-10-04T17:23:33", "mode": "full", "chunks_received": 1255, "chars_received": 2158, "usage": null, "seconds": 7.15}
-{"provider": "typhoon", "model": "typhoon-v2.5-30b-a3b-instruct", "at": "2026-10-04T17:23:37", "mode": "cut", "chunks_received": 30, "chars_received": 48, "usage": null, "seconds": 0.64}
-{"provider": "typhoon", "model": "typhoon-v2.5-30b-a3b-instruct", "at": "2026-10-04T17:23:41", "mode": "cut", "chunks_received": 30, "chars_received": 48, "usage": null, "seconds": 0.4}
-{"provider": "typhoon", "model": "typhoon-v2.5-30b-a3b-instruct", "at": "2026-10-04T17:23:44", "mode": "cut", "chunks_received": 30, "chars_received": 48, "usage": null, "seconds": 0.34}

@@ -1,104 +1,114 @@
-"""ทดลอง: เรียก AI แบบ stream แล้วตัดกลางทาง โดนคิด output กี่ token
-
-ใช้:
-  uv run python scratch/stream-cut/stream_cut.py typhoon full
-  uv run python scratch/stream-cut/stream_cut.py typhoon cut --after 30 --repeat 5
-  uv run python scratch/stream-cut/stream_cut.py gemini full
-
-full = ปล่อยจนจบ ได้ usage จริงจาก API (stream_options include_usage)
-cut  = รับ N chunk แล้วปิด connection — API ไม่ส่ง usage กลับมา
-       ต้องไปดูใน dashboard ของ provider แล้วเทียบกับที่ได้รับจริง
-
-ผลทุกครั้งต่อท้ายใน results.jsonl (มีเวลา ไว้จับคู่กับ dashboard)
-"""
-
-import argparse
 import json
 import os
-import time
-from datetime import datetime
-from pathlib import Path
-
 from dotenv import load_dotenv
-from openai import OpenAI
+import httpx
+from pathlib import Path
+import datetime
 
 load_dotenv()
 
-PROVIDERS = {
-    "typhoon": {
-        "base_url": "https://api.opentyphoon.ai/v1",
-        "key_env": "TYPHOON_API_KEY",
-        "model": "typhoon-v2.5-30b-a3b-instruct",
-    },
-    "gemini": {
-        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
-        "key_env": "GEMINI_API_KEY",
-        "model": "gemini-flash-lite-latest",
-    },
-}
+URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+KEY = os.getenv("GEMINI_API_KEY")
 
-# ยาวพอให้ตัดกลางทางได้ชัด ๆ
-PROMPT = "เล่าเรื่องน้ำท่วมในหมู่บ้านแห่งหนึ่ง ยาวประมาณ 600 คำ เป็นภาษาไทย"
-MAX_TOKENS = 1500
+lazy_prompt = "เล่าเรื่องน้ำท่วมในหมู่บ้าน ยาว ~600 คำ"
 
-RESULTS = Path(__file__).parent / "results.jsonl"
+# จำลองที่ Worker จะส่งจริง: system prompt + session ที่คุยมา + buffer ใหม่
+NONGMUANG_PROMPT = (Path(__file__).parent / "nongmuang_prompt.md").read_text()
+nongmuang_messages = [
+    {"role": "system", "content": NONGMUANG_PROMPT},
+    {"role": "user", "content": "สวัสดีครับ"},
+    {"role": "assistant", "content": "สวัสดีค่ะ เมืองเป็นแชทบอทของทีมออกแบบเมือง UCR ค่ะ มีเรื่องสภาพพื้นที่แถวบ้านอยากเล่าไหมคะ"},
+    {"role": "user", "content": "น้ำท่วมหน้าบ้านครับ ฝนตกทีไรท่วมทุกที"},
+    {"role": "assistant", "content": "ท่วมทุกครั้งที่ฝนตกเลย ลำบากแย่เลยค่ะ ปกติน้ำท่วมสูงประมาณไหน แล้วนานกี่ชั่วโมงกว่าจะลดคะ"},
+    {"role": "user", "content": "ประมาณข้อเท้า รอครึ่งวันกว่าจะลด เดินไปตลาดไม่ได้เลย"},
+]
+MODEL = "gemini-3.5-flash-lite"
+PRICE_IN = 0.30 / 1_000_000     # ดอลลาร์ต่อ 1 token
+PRICE_OUT = 2.50 / 1_000_000
 
 
-def run_once(client, model, mode, after):
-    started = time.time()
-    stream = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": PROMPT}],
-        max_tokens=MAX_TOKENS,
-        stream=True,
-        stream_options={"include_usage": True},
+def print_cost(input_tokens, output_tokens):
+    cost_in = input_tokens * PRICE_IN
+    cost_out = output_tokens * PRICE_OUT
+    print(f"  input  {input_tokens:>6} token  ${cost_in:.6f}")
+    print(f"  output {output_tokens:>6} token  ${cost_out:.6f}")
+    print(f"  รวม                 ${cost_in + cost_out:.6f}")
+
+def no_stream (prompt):
+    res = httpx.post(
+        url=URL,
+        headers={
+            "Authorization": f"Bearer {KEY}"
+            },
+        json = {
+            "model":MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+        },
+        timeout = 60,
     )
 
-    chunks = 0
-    text = ""
-    usage = None
-    for chunk in stream:
-        if chunk.usage:
-            usage = chunk.usage.model_dump()
-        if chunk.choices and chunk.choices[0].delta.content:
-            chunks += 1
-            text += chunk.choices[0].delta.content
-        if mode == "cut" and chunks >= after:
-            stream.close()
-            break
+    data = res.json()
+    print(data["choices"][0]["message"]["content"])
+    print(data["usage"])
 
-    return {
-        "at": datetime.now().isoformat(timespec="seconds"),
-        "mode": mode,
-        "chunks_received": chunks,
-        "chars_received": len(text),
-        "usage": usage,
-        "seconds": round(time.time() - started, 2),
-    }
+def simple_stream (prompt):
+    with httpx.stream(
+        "POST",
+        URL,
+        headers={"Authorization": f"Bearer {KEY}"},
+        json={
+            "model": MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        },
+        timeout=60,
+    ) as res:
+        for line in res.iter_lines():
+            if not line.startswith("data: "):
+                continue                      
+            if line == "data: [DONE]":
+                break                         
 
+            chunk = json.loads(line[len("data: "):])   # ตัด "data: " ออก แล้วแปลงเป็น dict
+            text = chunk["choices"][0]["delta"].get("content", "")
+            tokens = chunk["usage"]["completion_tokens"]
+            print(tokens, text[:20])
 
-def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("provider", choices=PROVIDERS)
-    p.add_argument("mode", choices=["full", "cut"])
-    p.add_argument("--after", type=int, default=30, help="cut: ตัดหลังได้กี่ chunk")
-    p.add_argument("--repeat", type=int, default=1)
-    args = p.parse_args()
+def cut_stream(messages, after):
+    count = 0
+    last_tokens = 0
+    last_input = 0
+    fulltext = ""
+    with httpx.stream(
+        "POST",
+        URL,
+        headers={"Authorization": f"Bearer {KEY}"},
+        json={
+            "model": MODEL,
+            "messages": messages,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        },
+        timeout=60,
+    ) as res:
+        for line in res.iter_lines():
+            if not line.startswith("data: "):
+                continue
+            if line == "data: [DONE]":
+                break
 
-    cfg = PROVIDERS[args.provider]
-    key = os.getenv(cfg["key_env"])
-    if not key:
-        raise SystemExit(f"ไม่มี {cfg['key_env']} ใน .env")
-    client = OpenAI(base_url=cfg["base_url"], api_key=key)
+            chunk = json.loads(line[len("data: "):])
+            fulltext += chunk["choices"][0]["delta"].get("content", "")
+            last_tokens = chunk["usage"]["completion_tokens"]
+            last_input = chunk["usage"]["prompt_tokens"]
+            count += 1
+            if count >= after:
+                break
+    print(fulltext)
+    print(datetime.datetime.now().strftime("%H:%M:%S"), "ตัดที่", count, "chunk")
+    print_cost(last_input, last_tokens)
 
-    for _ in range(args.repeat):
-        r = run_once(client, cfg["model"], args.mode, args.after)
-        r = {"provider": args.provider, "model": cfg["model"], **r}
-        print(json.dumps(r, ensure_ascii=False))
-        with RESULTS.open("a") as f:
-            f.write(json.dumps(r, ensure_ascii=False) + "\n")
-        time.sleep(3)  # กัน 429
-
-
-if __name__ == "__main__":
-    main()
+# ปล่อยจนจบ (after เยอะ ๆ = ไม่ตัด) แล้วตัดที่ 1 chunk
+cut_stream(nongmuang_messages, 999)
+cut_stream(nongmuang_messages, 1)

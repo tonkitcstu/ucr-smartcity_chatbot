@@ -48,10 +48,10 @@ app/
 
   workers/                      สมองเบื้องหลัง ไม่มี request ปลุก
     worker.py                   หยิบใบสั่งงาน แยกเป็น asyncio task ต่อใบ
-                                  งานคุย: รอเงียบ 3 วิ → BUFFERING→PROCESSING → เก็บรูป →
+                                  งานคุย: รอเงียบ 3 วิ → BUFFERING→PROCESSING → loading animation → เก็บรูป →
                                           communicator → reply LINE → บันทึกคำตอบบอท → ตอบแล้ว → PROCESSING→IDLE  [S2 S6]
                                   งานวิเคราะห์: analyser → บันทึกรายงาน 0..n → session วิเคราะห์แล้ว  [S7]
-    sweeper.py                  ทุก 1 นาที: ปิด session ที่เงียบเกิน 2 ชม. → ใบสั่งงานวิเคราะห์  [S7]
+    sweeper.py                  ทุก 1 นาที: ปิด session ที่เงียบเกิน 10 นาที → ใบสั่งงานวิเคราะห์  [S7]
 
   services/                     เครื่องมือกลาง แบ่งตามสิ่งของ
     pdpa.py                     การ์ด PDPA (ถ้อยคำตายตัว TC7), ยอมรับแล้วหรือยัง, บันทึกการยอมรับ
@@ -68,7 +68,7 @@ app/
   clients/                      ภาษาของของนอกบ้าน หนึ่งไฟล์ต่อหนึ่งอย่าง
     database.py                 SQL ทั้งหมด
     redis.py                    Redis
-    line.py                     ลายเซ็น, reply, ดาวน์โหลดรูป
+    line.py                     ลายเซ็น, reply, loading animation, ดาวน์โหลดรูป
     ai.py                       OpenAI SDK → Gemini
 
   models/                       pydantic ที่ส่งระหว่างชั้น
@@ -95,6 +95,7 @@ uploads/                        รูป (ไม่ขึ้น git)
 | 8 | ตอบ 200 | `api/line.py` |
 | 9 | หยิบใบสั่งงาน | `workers/worker.py` → `services/job.py` |
 | 10 | รอเงียบ 3 วิ (ดูข้างล่าง), BUFFERING → PROCESSING | `workers/worker.py` → `services/session.py` |
+| 10.1 | loading animation (60 วิ — หายเองตอนบอท reply) | `workers/worker.py` → `clients/line.py` |
 | 11 | เก็บรูป | `services/attachment.py` → `clients/line.py` · `clients/database.py` |
 | 12 | ประกอบ messages | `services/prompt.py` |
 | 13 | เรียก AI + บันทึก ai_calls | `services/communicator.py` → `clients/ai.py` · `clients/database.py` |
@@ -137,10 +138,9 @@ worker: อ่านเวลาข้อความล่าสุด → ย�
 
 ## ยังค้าง
 
-- loading animation ระหว่างรอ AI (ความคิดของ Idea ในข้อ 1.1) — ยังไม่มีในภาพ
 - analyser ตรวจรูปแบบแล้วลองซ้ำ 3 ครั้ง (ข้อ 1.1) — จะอยู่ใน `services/analyser.py`
 - ตัด stream ตอนมีข้อความใหม่เข้ามาระหว่าง PROCESSING — นอก happy path
-- S5 (บอกในแชทว่าบันทึกแล้ว) / S17 (ได้รายงานใน 5 นาที) ขัดกับเวลาปิด session 2 ชม.
+- S5 (บอกในแชทว่าบันทึกแล้ว) — นอก happy path: รายงานเกิดหลังปิด session แล้ว reply token หมด ต้องใช้ push (กินโควตา)
 
 ## ของเดิมที่ต้องเก็บกวาด
 

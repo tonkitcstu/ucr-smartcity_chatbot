@@ -47,6 +47,7 @@ loop ยังเงียบไม่ครบ 3 วิ
   W -> W : หลับเท่าที่ยังขาด
 end
 W -> SESS : BUFFERING → PROCESSING
+W -> CL_LINE : loading animation\n(หายเองตอน reply)
 W -> ATT : เก็บรูป
 ATT -> CL_LINE : ดาวน์โหลด
 W -> PROMPT : ประกอบ messages

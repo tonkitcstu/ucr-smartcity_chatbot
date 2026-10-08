@@ -1,0 +1,142 @@
+@startuml h2-first-message
+' H2 Controller รับข้อความแรก — S2 (พิมพ์เล่าปัญหาแถวบ้านด้วยคำพูดของตัวเอง)
+' ฟังก์ชันเท่าที่เส้นนี้เรียก · กล่อง = ไฟล์ · ลูกศร = ใครเรียกใคร
+' ต่อจาก H1: on_message หา User เจอแล้ว (ยอมรับ PDPA แล้ว)
+' design #159 → test #150 → code #160
+' ต้องตามแก้เอกสารเก่าทีหลัง (Idea: ยังไม่แก้ตอนนี้ เดี๋ยวแก้อีก):
+'   07 db.puml — sessions มี unique index: หนึ่ง user มีใบเปิดได้ใบเดียว
+'   08 structure.md — เพิ่ม models/session.py
+skinparam defaultFontName "Thonburi"
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+hide circle
+hide empty members
+
+title H2 — Controller รับข้อความแรก [S2]
+
+package "controllers/" #F7F7F7 {
+  class "line.py" as CTRL {
+    on_message(event: MessageEvent) -> None
+    to_incoming(event: MessageEvent) -> IncomingMessage | None
+  }
+}
+
+package "services/" #EEF4FF {
+  class "session.py" as SESS {
+    open_for(user: User) -> Session
+    save_message(session: Session, incoming: IncomingMessage) -> Message
+    buffer(message: Message) -> None
+    start_buffering(session: Session) -> bool
+  }
+  class "job.py" as JOB {
+    enqueue_chat(session: Session) -> None
+  }
+}
+
+package "clients/" #FFF4E8 {
+  class "database.py" as CL_DB {
+    open_session(user_id: UUID) -> Session
+    insert_message(session_id: UUID, incoming: IncomingMessage) -> Message
+  }
+  class "redis.py" as CL_REDIS {
+    connect() / close()
+    append_buffer(message: Message) -> None
+    set_last_message_at(session_id: UUID, at: float) -> None
+    set_buffering_if_idle(session_id: UUID) -> bool
+    push_job(job: Job) -> None
+  }
+}
+
+package "models/" #F0FFF0 {
+  class "session.py" as M_SESS {
+    Session
+    --
+    session_id: UUID
+    user_id: UUID
+  }
+  class "message.py" as M_MSG {
+    IncomingMessage  (แกะจาก event แล้ว ยังไม่บันทึก)
+    --
+    line_event_id: str
+    line_message_id: str
+    reply_token: str
+    type: "text"
+    content: str
+    ==
+    Message(IncomingMessage)  (บันทึกแล้ว)
+    --
+    message_id: UUID
+    session_id: UUID
+  }
+  class "job.py" as M_JOB {
+    Job
+    --
+    kind: "chat"
+    session_id: UUID
+  }
+}
+
+CTRL --> SESS
+CTRL --> JOB
+SESS --> CL_DB
+SESS --> CL_REDIS
+JOB --> CL_REDIS
+CL_DB ..> M_SESS : คืน
+CL_DB ..> M_MSG : คืน
+JOB ..> M_JOB : สร้าง
+
+note right of CTRL
+  <b>on_message</b> (ต่อจาก H1 — ได้ User แล้ว)
+  1. to_incoming(event) ได้ None → ข้าม
+  2. session.open_for(user)
+  3. session.save_message(session, incoming)
+  4. session.buffer(message)
+  5. session.start_buffering(session) ได้ True
+     → job.enqueue_chat(session)
+     ได้ False (BUFFERING อยู่แล้ว) → ไม่ใส่ใบใหม่
+  ไม่ reply — worker เป็นคน reply (H4)
+
+  <b>to_incoming</b>
+  ข้อความ text → IncomingMessage
+  ชนิดอื่น → None (รูปเพิ่มใน H3)
+end note
+
+note left of SESS
+  <b>open_for</b> หาใบที่เปิดอยู่ ไม่มีก็สร้าง
+
+  <b>save_message</b> บันทึกเป็น ผู้แจ้ง · ยังไม่ตอบ
+
+  <b>buffer</b> ต่อท้าย buffer
+  + เวลาข้อความล่าสุด = ตอนนี้
+  (reply_token อยู่ในข้อความ — worker ใช้ตัวล่าสุด)
+
+  <b>start_buffering</b> IDLE → BUFFERING
+  True = เพิ่งเปลี่ยน (ผู้ชนะคนเดียว)
+  False = BUFFERING / PROCESSING อยู่แล้ว
+end note
+
+note bottom of CL_DB
+  <b>open_session</b>
+  INSERT sessions (user_id)
+  ชนกับใบที่เปิดอยู่ → ไม่สร้างใหม่ คืนใบเดิม
+  ทั้งสองทาง last_message_at = now() (sweeper H5 ใช้)
+  ต้องมี unique index: user_id WHERE status = 'open'
+  — ข้อความสองอันมาพร้อมกัน ต้องได้ใบเดียว
+
+  <b>insert_message</b>
+  role = reporter · status = pending
+end note
+
+note bottom of CL_REDIS
+  key ต่อใบ (session_id)
+    session:{id}:buffer           list ของ Message
+    session:{id}:last_message_at  เวลา
+    session:{id}:state            ไม่มี key = IDLE
+  คิวงานรวม
+    jobs                          list ของ Job
+
+  <b>set_buffering_if_idle</b> = SET state BUFFERING NX
+  คำสั่งเดียว: ไม่มี key → ตั้ง คืน True · มีแล้ว → คืน False
+end note
+@enduml

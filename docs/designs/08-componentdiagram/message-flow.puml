@@ -1,0 +1,72 @@
+@startuml message-flow
+' ข้อความหนึ่งข้อความเดินผ่านไฟล์ไหน — ลำดับจากข้อ 1.1 ของ Idea
+' ตารางเดียวกันอยู่ใน structure.md
+skinparam defaultFontName "Thonburi"
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+
+title ข้อความหนึ่งข้อความ — เดินผ่านไฟล์ไหน [S2]
+
+participant "LINE" as LINE
+box "app" #F7F7F7
+  participant "api/\nline.py" as API
+  participant "controllers/\nline.py" as CTRL
+  participant "workers/\nworker.py" as W
+end box
+box "services/" #EEF4FF
+  participant "pdpa" as PDPA
+  participant "session" as SESS
+  participant "job" as JOB
+  participant "attachment" as ATT
+  participant "prompt" as PROMPT
+  participant "communicator" as COMM
+end box
+box "clients/" #FFF4E8
+  participant "line" as CL_LINE
+  participant "ai" as CL_AI
+end box
+
+LINE -> API : webhook
+API -> CTRL
+CTRL -> CL_LINE : เช็คลายเซ็น
+CTRL -> PDPA : ยอมรับแล้ว?
+CTRL -> CTRL : แกะ event → models/message
+CTRL -> SESS : หา/สร้าง session + บันทึกข้อความ
+CTRL -> SESS : ต่อ buffer + เวลาข้อความล่าสุด = ตอนนี้
+alt IDLE
+  CTRL -> SESS : IDLE → BUFFERING\n(คำสั่ง Redis คำสั่งเดียว)
+  CTRL -> JOB : ใบสั่งงานคุย
+else BUFFERING อยู่แล้ว
+  CTRL -> CTRL : ไม่ใส่ใบใหม่\nworker ที่รออยู่เห็นเอง
+end
+API --> LINE : 200
+
+W -> JOB : หยิบใบสั่งงาน\n(แยกเป็น asyncio task ต่อใบ)
+loop ยังเงียบไม่ครบ 3 วิ
+  W -> SESS : อ่านเวลาข้อความล่าสุด
+  W -> W : หลับเท่าที่ยังขาด
+end
+W -> SESS : BUFFERING → PROCESSING
+W -> ATT : เก็บรูป
+ATT -> CL_LINE : ดาวน์โหลด
+W -> PROMPT : ประกอบ messages
+W -> COMM : messages
+COMM -> CL_AI : stream
+COMM --> W : คำตอบ (บันทึก ai_calls แล้ว)
+W -> CL_LINE : reply
+CL_LINE -> LINE
+W -> SESS : บันทึกคำตอบบอท, ข้อความ → ตอบแล้ว\nล้าง buffer, ต่อประวัติ, PROCESSING → IDLE
+
+note over W, COMM #FFF1B8
+  AI พังหรือเกิน 50 วิ → worker reply ข้อความสำรอง [S6]
+  แล้วบันทึกข้อความสำรองลง messages เป็น role บอท
+  (ไม่งั้นตัววิเคราะห์อ่านแล้วเหมือนบอทเงียบไป)
+  (Claude เสนอ — Idea ยังไม่มีกฎเรื่อง error)
+end note
+
+note over SESS #F0F0F0
+  session.py / job.py / pdpa.py / attachment.py
+  คุยกับ clients/database.py และ clients/redis.py
+  (ละไว้ไม่วาด ให้ภาพไม่รก)
+end note
+@enduml

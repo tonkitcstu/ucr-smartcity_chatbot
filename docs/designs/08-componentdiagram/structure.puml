@@ -1,0 +1,76 @@
+@startuml structure
+' โครงไฟล์ happy path (S1–S8) — ชั้นเรียงตามทางไหลลง
+' ลูกศรชี้ลงอย่างเดียว ชั้นล่างไม่ import ชั้นบน
+' รายละเอียดแต่ละไฟล์อยู่ใน structure.md
+skinparam defaultFontName "Thonburi"
+skinparam shadowing false
+skinparam componentStyle rectangle
+skinparam packageStyle rectangle
+skinparam ranksep 50
+
+title โครงไฟล์ — happy path
+
+actor "LINE" as LINE
+actor "ทีมออกแบบ" as D
+
+package "main.py  (Boss)" as MAIN {
+}
+
+package "api/  (เส้นทาง)" as API {
+  component "line.py" as A_LINE
+  component "dashboard.py" as A_DASH
+}
+
+package "controllers/  (สมอง: request ปลุก)" as CTRL {
+  component "line.py" as C_LINE
+  component "dashboard.py" as C_DASH
+}
+
+package "workers/  (สมอง: เบื้องหลัง)" as WRK {
+  component "worker.py" as W
+  component "sweeper.py" as S
+}
+
+package "services/  (เครื่องมือกลาง ตามสิ่งของ)" as SVC {
+  component "pdpa.py" as SV_PDPA
+  component "session.py" as SV_SESS
+  component "job.py" as SV_JOB
+  component "attachment.py" as SV_ATT
+  component "prompt.py" as SV_PROMPT
+  component "communicator.py" as SV_COMM
+  component "analyser.py" as SV_ANA
+  component "report.py" as SV_REP
+  component "auth.py" as SV_AUTH
+}
+
+package "clients/  (ภาษาของของนอกบ้าน)" as CLI {
+  component "database.py" as CL_DB
+  component "redis.py" as CL_REDIS
+  component "line.py" as CL_LINE
+  component "ai.py" as CL_AI
+}
+
+database "PSQL" as PG
+queue "Redis" as RD
+cloud "LINE API" as LAPI
+cloud "Gemini" as GEM
+
+LINE --> A_LINE : webhook
+D --> A_DASH : JWT [S8]
+
+MAIN --> API : เปิด FastAPI
+MAIN --> WRK : ปลุกเป็น asyncio task
+
+A_LINE --> C_LINE
+A_DASH --> C_DASH
+
+CTRL --> SVC
+WRK --> SVC
+W --> CL_LINE : reply
+SVC --> CLI
+
+CL_DB --> PG
+CL_REDIS --> RD
+CL_LINE --> LAPI
+CL_AI --> GEM
+@enduml

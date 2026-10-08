@@ -1,8 +1,12 @@
 """SQL ทั้งหมดอยู่ที่นี่"""
 
+from uuid import UUID
+
 import asyncpg
 
 from app.core.config import DATABASE_URL
+from app.models.message import IncomingMessage, Message
+from app.models.session import Session
 from app.models.user import User
 
 pool: asyncpg.Pool | None = None
@@ -36,3 +40,33 @@ async def insert_user(line_user_id: str) -> User:
         line_user_id,
     )
     return User(**row)
+
+
+async def open_session(user_id: UUID) -> Session:
+    """เปิดใบใหม่ · มีใบเปิดอยู่แล้วคืนใบเดิม · ทั้งสองทาง last_message_at = now()"""
+    row = await pool.fetchrow(
+        """
+        INSERT INTO sessions (user_id) VALUES ($1)
+        ON CONFLICT (user_id) WHERE status = 'open' DO UPDATE SET last_message_at = now()
+        RETURNING session_id, user_id
+        """,
+        user_id,
+    )
+    return Session(**row)
+
+
+async def insert_message(session_id: UUID, incoming: IncomingMessage) -> Message:
+    """บันทึกเป็น ผู้แจ้ง · ยังไม่ตอบ"""
+    message_id = await pool.fetchval(
+        """
+        INSERT INTO messages (session_id, line_event_id, line_message_id, role, type, content)
+        VALUES ($1, $2, $3, 'reporter', $4, $5)
+        RETURNING message_id
+        """,
+        session_id,
+        incoming.line_event_id,
+        incoming.line_message_id,
+        incoming.type,
+        incoming.content,
+    )
+    return Message(**incoming.model_dump(), message_id=message_id, session_id=session_id)

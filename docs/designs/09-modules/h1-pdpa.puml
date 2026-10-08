@@ -1,0 +1,126 @@
+@startuml h1-pdpa
+' H1 ผู้แจ้งยอมรับ PDPA — S1 (พอเพิ่มเพื่อนบอท ได้อ่านว่าระบบเก็บอะไร แล้วกดยอมรับก่อนเล่า)
+' ฟังก์ชันเท่าที่เส้นนี้เรียก · กล่อง = ไฟล์ · ลูกศร = ใครเรียกใคร
+' design #157 → test #149 → code #158
+' ต้องตามแก้เอกสารเก่าทีหลัง (Idea: ยังไม่แก้ตอนนี้ เดี๋ยวแก้อีก):
+'   07 db.puml — users.pdpa_accepted_at เป็น NOT NULL (แถวเกิดตอนยอมรับเท่านั้น)
+'   08 structure.md / structure.puml / message-flow.puml — เพิ่ม services/user.py, models/user.py
+'      ขั้น "เช็ค PDPA" = หา User จาก line_user_id ไม่เจอ = ยังไม่ยอมรับ
+skinparam defaultFontName "Thonburi"
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+hide circle
+hide empty members
+
+title H1 — ผู้แจ้งยอมรับ PDPA [S1]
+
+package "api/" #F7F7F7 {
+  class "line.py" as API {
+    POST /webhook/line
+    webhook(request) -> 200 | 400
+  }
+}
+
+package "controllers/" #F7F7F7 {
+  class "line.py" as CTRL {
+    handle_webhook(body: str, signature: str) -> None
+    on_follow(event: FollowEvent) -> None
+    on_postback(event: PostbackEvent) -> None
+    on_message(event: MessageEvent) -> None
+  }
+}
+
+package "services/" #EEF4FF {
+  class "user.py" as USER {
+    find_by_line_id(line_user_id: str) -> User | None
+  }
+  class "pdpa.py" as PDPA {
+    card() -> FlexMessage
+    accept(line_user_id: str) -> User
+  }
+  class "pdpa_card.json" as CARD {
+    ถ้อยคำตายตัว (TC7 ข้อยกเว้น 3)
+  }
+}
+
+package "clients/" #FFF4E8 {
+  class "line.py" as CL_LINE {
+    parse_events(body: str, signature: str) -> list[Event]
+    reply(reply_token: str, messages: list) -> None
+  }
+  class "database.py" as CL_DB {
+    select_user_by_line_id(line_user_id: str) -> User | None
+    insert_user(line_user_id: str) -> User
+  }
+}
+
+package "models/" #F0FFF0 {
+  class "user.py" as M_USER {
+    User
+    --
+    user_id: UUID
+    line_user_id: str
+    pdpa_accepted_at: datetime
+  }
+}
+
+API --> CTRL
+CTRL --> CL_LINE : parse_events, reply
+CTRL --> USER
+CTRL --> PDPA
+USER --> CL_DB
+PDPA --> CARD : อ่าน
+PDPA --> CL_DB
+CL_DB ..> M_USER : คืน
+
+note right of API
+  อ่าน body ดิบ + header X-Line-Signature
+  ส่งต่อทั้งก้อน ไม่แกะเอง
+  ลายเซ็นไม่ผ่าน → 400 · อื่นๆ → 200
+end note
+
+note right of CTRL
+  <b>handle_webhook</b>
+  ลายเซ็นไม่ผ่าน → InvalidSignatureError (api แปลงเป็น 400)
+  webhook หนึ่งครั้งมีหลาย event → วนทีละ event แยกตามชนิด
+  event ชนิดอื่น (unfollow, join ฯลฯ) → ข้าม
+
+  <b>on_follow</b> → reply การ์ด · ไม่เขียน DB
+
+  <b>on_postback</b>
+  data = "pdpa_accept" → pdpa.accept · ไม่ reply
+  data อื่น → ข้าม
+
+  <b>on_message</b>
+  user.find_by_line_id ได้ None (ยังไม่ยอมรับ)
+  → reply การ์ดอีกครั้ง แล้วจบ · ไม่บันทึกข้อความ ไม่ส่ง AI (LC1)
+  ได้ User → ส่ง User ต่อให้ H2
+
+  line_user_id ใช้แค่ตรงนี้ ตอนหา User
+  ชั้นล่างจากนี้ใช้ User / user_id
+end note
+
+note left of PDPA
+  <b>accept</b> สร้าง User พร้อม pdpa_accepted_at = now()
+  ยอมรับซ้ำ (กดปุ่มสองที / LINE ส่ง postback ซ้ำ)
+  → คืน User เดิม เวลาเดิมไม่เปลี่ยน
+end note
+
+note bottom of CL_DB
+  <b>insert_user</b>
+  INSERT users (line_user_id, pdpa_accepted_at = now())
+  ชนกับแถวเดิม → ไม่เขียนทับ คืนแถวเดิม
+
+  แถว users เกิดตอนกดยอมรับเท่านั้น
+  ก่อนกด ไม่เก็บอะไรของเขาเลย (LC1)
+  → มี User = ยอมรับแล้ว
+end note
+
+note bottom of CARD
+  ปุ่มยอมรับ = postback data "pdpa_accept"
+  + displayText → ผู้แจ้งเห็นว่าตัวเองกดแล้ว
+  โดยบอทไม่ต้องตอบข้อความตายตัว (TC7)
+  เนื้อหาการ์ด (LC3 ตรวจถ้อยคำ, LC4 Gemini ฟรี) ไม่อยู่ในงานออกแบบนี้
+end note
+@enduml

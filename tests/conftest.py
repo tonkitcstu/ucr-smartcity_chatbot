@@ -5,6 +5,7 @@ from pathlib import Path
 import asyncpg
 import httpx
 import pytest
+from redis.asyncio import Redis
 
 from tests.line_webhook import LINE_CHANNEL_SECRET
 
@@ -42,7 +43,16 @@ async def db():
 
 
 @pytest.fixture
-async def client(db):
+async def redis():
+    """Redis db 15 ล้างก่อนทุกข้อ"""
+    conn = Redis.from_url(TEST_REDIS_URL, decode_responses=True)
+    await conn.flushdb()
+    yield conn
+    await conn.aclose()
+
+
+@pytest.fixture
+async def client(db, redis):
     from app.main import app
 
     async with app.router.lifespan_context(app):

@@ -1,9 +1,10 @@
 """สมองของ webhook LINE: เช็คลายเซ็น แกะ event แล้วแยกตามชนิด"""
 
-from linebot.v3.webhooks import FollowEvent, MessageEvent, PostbackEvent
+from linebot.v3.webhooks import FollowEvent, MessageEvent, PostbackEvent, TextMessageContent
 
 from app.clients import line
-from app.services import pdpa, user
+from app.models.message import IncomingMessage
+from app.services import job, pdpa, session, user
 
 
 async def handle_webhook(body: str, signature: str) -> None:
@@ -29,9 +30,33 @@ async def on_postback(event: PostbackEvent) -> None:
 
 
 async def on_message(event: MessageEvent) -> None:
-    """ยังไม่ยอมรับ → ส่งการ์ดอีกครั้ง ไม่เก็บข้อความ ไม่ส่ง AI (LC1)"""
+    """ยังไม่ยอมรับ → ส่งการ์ดอีกครั้ง ไม่เก็บข้อความ ไม่ส่ง AI (LC1)
+    ยอมรับแล้ว → บันทึก ต่อ buffer · IDLE → BUFFERING ได้ → ใส่ใบสั่งงานคุย · ไม่ reply (worker ตอบ)
+    """
     found = await user.find_by_line_id(event.source.user_id)
     if found is None:
         await line.reply(event.reply_token, [pdpa.card()])
         return
-    # ยอมรับแล้ว → H2 (#160)
+
+    incoming = to_incoming(event)
+    if incoming is None:
+        return
+
+    current = await session.open_for(found)
+    message = await session.save_message(current, incoming)
+    await session.buffer(message)
+    if await session.start_buffering(current):
+        await job.enqueue_chat(current)
+
+
+def to_incoming(event: MessageEvent) -> IncomingMessage | None:
+    """ข้อความ text → IncomingMessage · ชนิดอื่น → None (รูปเพิ่มใน H3)"""
+    if not isinstance(event.message, TextMessageContent):
+        return None
+    return IncomingMessage(
+        line_event_id=event.webhook_event_id,
+        line_message_id=event.message.id,
+        reply_token=event.reply_token,
+        type="text",
+        content=event.message.text,
+    )

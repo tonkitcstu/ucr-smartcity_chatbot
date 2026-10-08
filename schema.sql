@@ -18,6 +18,9 @@ CREATE TABLE sessions (
     closed_at       timestamptz
 );
 
+-- หนึ่งผู้แจ้งมีใบเปิดได้ใบเดียว — ข้อความสองอันมาพร้อมกันต้องได้ใบเดียว
+CREATE UNIQUE INDEX sessions_one_open_per_user ON sessions (user_id) WHERE status = 'open';
+
 CREATE TABLE messages (
     message_id      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id      uuid NOT NULL REFERENCES sessions (session_id) ON DELETE CASCADE,

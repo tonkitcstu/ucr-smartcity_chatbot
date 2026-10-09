@@ -41,6 +41,11 @@ def text_event(text, user_id="U_test", reply_token="rt-text", event_id="ev-text"
     return _event("message", user_id, reply_token, event_id, message=message)
 
 
+def image_event(user_id="U_test", reply_token="rt-image", event_id="ev-image", message_id="img-1"):
+    message = {"type": "image", "id": message_id, "contentProvider": {"type": "line"}, "quoteToken": "q"}
+    return _event("message", user_id, reply_token, event_id, message=message)
+
+
 async def post_webhook(client, *events, signature=None):
     body = webhook_body(*events)
     headers = {"X-Line-Signature": signature or sign(body), "Content-Type": "application/json"}

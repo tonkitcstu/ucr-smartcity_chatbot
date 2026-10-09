@@ -1,0 +1,95 @@
+@startuml h3-image
+' H3 Controller รับรูปภายใน 3 วิ — S3 (ส่งรูปประกอบเรื่องที่เล่าได้)
+' ฟังก์ชันเท่าที่เส้นนี้เรียก · กล่อง = ไฟล์ · ลูกศร = ใครเรียกใคร
+' ต่อจาก H2: ข้อความแรกเข้าแล้ว state เป็น BUFFERING · รูปตามมาก่อน worker ตื่น
+' design #161 → test #151 → code #162
+' ดาวน์โหลดรูป [TC9] เป็นงานของ worker (H4) ตาม 06 happy-path.puml — controller ไม่ดาวน์โหลด
+skinparam defaultFontName "Thonburi"
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+hide circle
+hide empty members
+
+title H3 — Controller รับรูปภายใน 3 วิ [S3]
+
+package "controllers/" #F7F7F7 {
+  class "line.py" as CTRL {
+    on_message(event: MessageEvent) -> None
+    to_incoming(event: MessageEvent) -> IncomingMessage | None
+  }
+}
+
+package "services/" #EEF4FF {
+  class "session.py" as SESS {
+    open_for(user: User) -> Session
+    save_message(session: Session, incoming: IncomingMessage) -> Message
+    buffer(message: Message) -> None
+    start_buffering(session: Session) -> bool
+  }
+}
+
+package "clients/" #FFF4E8 {
+  class "database.py" as CL_DB {
+    open_session(user_id: UUID) -> Session
+    insert_message(session_id: UUID, incoming: IncomingMessage) -> Message
+  }
+  class "redis.py" as CL_REDIS {
+    append_buffer(message: Message) -> None
+    set_last_message_at(session_id: UUID, at: float) -> None
+    set_buffering_if_idle(session_id: UUID) -> bool
+  }
+}
+
+package "models/" #F0FFF0 {
+  class "message.py" as M_MSG {
+    IncomingMessage  (แกะจาก event แล้ว ยังไม่บันทึก)
+    --
+    line_event_id: str
+    line_message_id: str
+    reply_token: str
+    type: "text" | "image"
+    content: str | None  (รูป = None)
+    ==
+    Message(IncomingMessage)  (บันทึกแล้ว)
+    --
+    message_id: UUID
+    session_id: UUID
+  }
+}
+
+CTRL --> SESS
+SESS --> CL_DB
+SESS --> CL_REDIS
+CL_DB ..> M_MSG : คืน
+
+note right of CTRL
+  <b>on_message</b> (รูปมาตอน BUFFERING)
+  1. to_incoming(event) → IncomingMessage ของรูป
+  2. session.open_for(user) → ใบที่เปิดอยู่
+  3. session.save_message(session, incoming)
+  4. session.buffer(message)
+  5. session.start_buffering(session) ได้ False
+     (BUFFERING อยู่แล้ว) → ไม่ใส่ใบสั่งงาน
+  ไม่ reply
+
+  <b>to_incoming</b>
+  ข้อความ text → type text · content = ข้อความ
+  รูป → type image · content = None
+     line_message_id = id รูป (worker ใช้ดาวน์โหลด)
+  ชนิดอื่น → None
+end note
+
+note bottom of CL_DB
+  <b>insert_message</b>
+  รูป: type = image · content = NULL
+  line_message_id เก็บไว้ · role = reporter · status = pending
+  attachment ยังไม่เกิด — worker สร้างตอนดาวน์โหลด (H4)
+end note
+
+note bottom of CL_REDIS
+  <b>append_buffer</b>
+  รายการรูปใน buffer มี line_message_id + reply_token
+  (reply_token ของรูปเป็นตัวล่าสุด — worker ใช้ตัวนี้ตอบ)
+end note
+@enduml

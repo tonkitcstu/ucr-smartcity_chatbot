@@ -1,11 +1,16 @@
 """สมองของ webhook LINE: เช็คลายเซ็น แกะ event แล้วแยกตามชนิด"""
 
-from linebot.v3.webhooks import FollowEvent, MessageEvent, PostbackEvent, TextMessageContent
+from linebot.v3.webhooks import (
+    FollowEvent,
+    ImageMessageContent,
+    MessageEvent,
+    PostbackEvent,
+    TextMessageContent,
+)
 
 from app.clients import line
 from app.models.message import IncomingMessage
 from app.services import job, pdpa, session, user
-
 
 async def handle_webhook(body: str, signature: str) -> None:
     """ลายเซ็นไม่ผ่าน → InvalidSignatureError · event ชนิดอื่นข้าม"""
@@ -50,13 +55,19 @@ async def on_message(event: MessageEvent) -> None:
 
 
 def to_incoming(event: MessageEvent) -> IncomingMessage | None:
-    """ข้อความ text → IncomingMessage · ชนิดอื่น → None (รูปเพิ่มใน H3)"""
-    if not isinstance(event.message, TextMessageContent):
+    """ข้อความ text → type text · รูป → type image ไม่มี content (worker ดาวน์โหลดด้วย line_message_id) · ชนิดอื่น → None"""
+    # availible message_type
+    message_types = {
+        TextMessageContent: "text",
+        ImageMessageContent: "image",
+    }
+    kind = message_types.get(type(event.message))
+    if kind is None:
         return None
     return IncomingMessage(
         line_event_id=event.webhook_event_id,
         line_message_id=event.message.id,
         reply_token=event.reply_token,
-        type="text",
-        content=event.message.text,
+        type=kind,
+        content=getattr(event.message, "text", None),
     )

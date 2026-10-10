@@ -1,0 +1,248 @@
+@startuml h4-reply
+' H4 Worker ตอบผู้แจ้ง — S2 (บอทตอบภายใน 1 นาที), S3 (ระบบดาวน์โหลดรูปมาเก็บทันที)
+' ฟังก์ชันเท่าที่เส้นนี้เรียก · กล่อง = ไฟล์ · ลูกศร = ใครเรียกใคร
+' ต่อจาก H3: ใบสั่งงานคุย 1 ใบ · buffer มีข้อความ + รูป · state BUFFERING
+' design #163 → test #152 → code #164
+' role ของ messages เป็น user / assistant ตามรูปแบบ OpenAI (TC5) — schema เปลี่ยนใน #179 ก่อนเขียน test
+' ต้องตามแก้เอกสารเก่าทีหลัง (Idea: ยังไม่แก้ตอนนี้):
+'   08 structure.md — เพิ่ม models/ai.py, models/attachment.py · config SILENCE_SECONDS, WORKER_ENABLED, UPLOADS_DIR
+skinparam defaultFontName "Thonburi"
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+hide circle
+hide empty members
+
+title H4 — Worker ตอบผู้แจ้ง [S2 S3]
+
+class "main.py" as MAIN {
+  lifespan(app)
+}
+
+package "workers/" #F7F7F7 {
+  class "worker.py" as W {
+    run() -> None
+    run_chat(job: Job) -> None
+    wait_for_silence(session_id: UUID) -> None
+  }
+}
+
+package "services/" #EEF4FF {
+  class "job.py" as JOB {
+    next() -> Job
+  }
+  class "session.py" as SESS {
+    last_message_at(session_id: UUID) -> float
+    start_processing(session_id: UUID) -> None
+    read_buffer(session_id: UUID) -> list[Message]
+    read_history(session_id: UUID) -> list[ContextMessage]
+    finish(session_id: UUID, buffer: list[Message], turn: list[ContextMessage], answer: str) -> None
+  }
+  class "user.py" as USER {
+    line_id_for(session_id: UUID) -> str
+  }
+  class "attachment.py" as ATT {
+    save(message: Message) -> Attachment
+  }
+  class "prompt.py" as PROMPT {
+    latest_config() -> AiConfig
+    turn(buffer: list[Message], attachments: list[Attachment]) -> list[ContextMessage]
+    for_chat(config: AiConfig, history: list[ContextMessage], turn: list[ContextMessage]) -> list[ContextMessage]
+  }
+  class "communicator.py" as COMM {
+    chat(session_id: UUID, config: AiConfig, messages: list[ContextMessage]) -> str
+  }
+}
+
+package "clients/" #FFF4E8 {
+  class "redis.py" as CL_REDIS {
+    pop_job() -> Job
+    get_last_message_at(session_id: UUID) -> float
+    set_processing(session_id: UUID) -> None
+    get_buffer(session_id: UUID) -> list[Message]
+    get_history(session_id: UUID) -> list[ContextMessage]
+    append_history(session_id: UUID, items: list[ContextMessage]) -> None
+    clear_buffer(session_id: UUID) -> None
+    clear_state(session_id: UUID) -> None
+  }
+  class "database.py" as CL_DB {
+    select_line_user_id(session_id: UUID) -> str
+    insert_attachment(message_id: UUID, file_path: str) -> Attachment
+    select_latest_ai_config() -> AiConfig
+    select_prompt(prompt_id: UUID) -> Prompt
+    select_model(model_id: UUID) -> AiModel
+    insert_ai_call(session_id: UUID, ai_config_id: UUID, kind: "communicator", request: list[ContextMessage], reply: AiReply) -> None
+    insert_bot_message(session_id: UUID, content: str) -> None
+    mark_answered(message_ids: list[UUID]) -> None
+  }
+  class "line.py" as CL_LINE {
+    show_loading(line_user_id: str) -> None
+    download_message_content(line_message_id: str) -> bytes
+    reply(reply_token: str, messages: list) -> None
+  }
+  class "ai.py" as CL_AI {
+    chat(model: str, messages: list[ContextMessage]) -> AiReply
+  }
+}
+
+package "models/" #F0FFF0 {
+  class "attachment.py" as M_ATT {
+    Attachment
+    --
+    attachment_id: UUID
+    message_id: UUID
+    file_path: str
+  }
+  class "context.py" as M_CTX {
+    ContextMessage  (บทสนทนาที่ส่งให้ AI)
+    --
+    role: "system" | "user" | "assistant"
+    type: "text" | "image"
+    content: str  (text = ข้อความ · image = path ไฟล์รูป)
+  }
+  class "ai.py" as M_AI {
+    AiConfig  (ai_configs)
+    --
+    ai_config_id: UUID
+    chat_model_id: UUID
+    chat_prompt_id: UUID
+    analyzer_model_id: UUID
+    analyzer_prompt_id: UUID
+    ==
+    AiModel  (models)
+    --
+    model_id: UUID
+    provider: str
+    name: str
+    ==
+    Prompt  (prompts)
+    --
+    prompt_id: UUID
+    prompt: str
+    ==
+    AiReply
+    --
+    text: str
+    input_tokens: int | None
+    output_tokens: int | None
+  }
+}
+
+MAIN --> W
+W --> JOB
+W --> SESS
+W --> USER
+W --> ATT
+W --> PROMPT
+W --> COMM
+W --> CL_LINE
+JOB --> CL_REDIS
+SESS --> CL_REDIS
+SESS --> CL_DB
+USER --> CL_DB
+ATT --> CL_LINE
+ATT --> CL_DB
+PROMPT --> CL_DB
+COMM --> CL_AI
+COMM --> CL_DB
+CL_DB ..> M_ATT : คืน
+CL_DB ..> M_AI : คืน AiConfig · AiModel · Prompt
+CL_AI ..> M_AI : คืน AiReply
+PROMPT ..> M_CTX : สร้าง
+CL_AI ..> M_CTX : แปลงเป็นรูปแบบ OpenAI
+
+note top of MAIN
+  <b>lifespan</b>
+  ต่อ database + redis
+  WORKER_ENABLED → เปิด worker.run() เป็น asyncio task
+  ปิดแอป → ยกเลิก task
+  (test ปิด WORKER_ENABLED แล้วเรียก run_chat เอง)
+end note
+
+note right of W
+  <b>run</b> วนไม่จบ
+  job.next() → แยก run_chat(job) เป็น asyncio task ต่อใบ
+  (คน A รอเงียบ คน B ไม่ต้องรอด้วย)
+
+  <b>run_chat</b> งานคุยหนึ่งใบ
+  1. wait_for_silence(session_id)
+  2. session.start_processing → state PROCESSING
+  3. line.show_loading(user.line_id_for(session_id))
+  4. buffer = session.read_buffer
+  5. รูปแต่ละรูปใน buffer → attachment.save(message)
+  6. config = prompt.latest_config()
+  7. turn = prompt.turn(buffer, attachments)
+     messages = prompt.for_chat(config, session.read_history, turn)
+  8. answer = communicator.chat(session_id, config, messages)
+  9. line.reply(reply_token ของข้อความสุดท้ายใน buffer, [answer])
+  10. session.finish(session_id, buffer, turn, answer)
+
+  <b>wait_for_silence</b>
+  ขาดอีก = SILENCE_SECONDS − (ตอนนี้ − last_message_at)
+  ขาด > 0 → หลับเท่าที่ขาด แล้วอ่านใหม่ · ขาด ≤ 0 → กลับ
+end note
+
+note left of SESS
+  <b>start_processing</b> BUFFERING → PROCESSING
+
+  <b>read_history</b> ที่คุยมาแล้วในใบนี้
+
+  <b>finish</b>
+  บันทึกคำตอบบอท (assistant · ตอบแล้ว)
+  ข้อความใน buffer → ตอบแล้ว
+  ต่อประวัติด้วย turn + คำตอบบอท
+  ล้าง buffer · state → IDLE (ลบ key)
+end note
+
+note left of USER
+  <b>line_id_for</b>
+  LINE ID ของเจ้าของใบ — loading animation ต้องใช้
+  (ใบสั่งงานมีแค่ session_id)
+end note
+
+note bottom of ATT
+  <b>save</b> [TC9]
+  ดาวน์โหลดรูปด้วย line_message_id
+  เขียนลง UPLOADS_DIR/{message_id}.jpg
+  บันทึก attachment ผูกกับข้อความรูป
+end note
+
+note bottom of PROMPT
+  <b>latest_config</b> ai_configs แถวล่าสุด
+
+  <b>turn</b> buffer → ContextMessage · role user
+    text → type text · content = ข้อความ
+    image → type image · content = file_path ของ attachment
+
+  <b>for_chat</b> select_prompt(config.chat_prompt_id)
+    → [system · text · prompt] + history + turn
+end note
+
+note bottom of COMM
+  <b>chat</b>
+  select_model(config.chat_model_id)
+  ai.chat(model.name, messages)
+  บันทึก ai_calls: communicator · request · คำตอบดิบ · token · ok
+  คืนข้อความคำตอบ — ไม่รู้จัก LINE
+end note
+
+note bottom of CL_REDIS
+  <b>pop_job</b> = BLPOP jobs (รอจนมีใบ)
+  <b>set_processing</b> = SET state PROCESSING
+  <b>clear_state</b> = DEL state → IDLE
+  key ใหม่: session:{id}:history  list ของ ContextMessage
+end note
+
+note bottom of CL_LINE
+  <b>show_loading</b> จุด ... กำลังพิมพ์ 60 วิ (หายเองตอน reply)
+  <b>download_message_content</b> เนื้อไฟล์ของข้อความ (รูป) จาก LINE ด้วย line_message_id
+end note
+
+note bottom of CL_AI
+  <b>chat</b> OpenAI SDK · API_ENDPOINT + API_KEY
+  ContextMessage → รูปแบบ OpenAI
+    type text → content = ข้อความ
+    type image → อ่านไฟล์ที่ content → image_url: data:image/jpeg;base64,...
+  เรียกแบบ stream รวมเป็นคำตอบเดียว + token
+end note
+@enduml

@@ -1,6 +1,7 @@
 """H6 Worker ทำรายงาน — S4 S7 · spec ใน #154 · แบบ docs/designs/09-modules/h6-report.puml"""
 
 import json
+import os
 from itertools import product
 from types import SimpleNamespace
 
@@ -10,6 +11,8 @@ CHAT_PROMPT = "คุณคือน้องเมือง"
 CHAT_MODEL = "test-chat-model"
 ANALYSER_PROMPT = "สรุปเรื่องที่ผู้แจ้งเล่าเป็นรายงาน"
 ANALYSER_MODEL = "test-analyser-model"
+# ปิดท้ายคำขอของตัววิเคราะห์เสมอ — Gemini ไม่รับคำขอที่จบด้วย assistant (#202)
+SESSION_EXPIRED = ("user", "text", "//leave chat because session expired")
 
 
 @pytest.fixture
@@ -173,6 +176,7 @@ async def test_text_image_location_become_one_report(client, db, ai_config, anal
         ("user", "image", "/uploads/photo.jpg"),
         ("user", "text", "[ตำแหน่ง 1]"),
         ("user", "text", "สูงประมาณเข่า"),
+        SESSION_EXPIRED,
     ]
 
     [report] = await reports_of(db, session_id)
@@ -353,6 +357,7 @@ async def test_labels_count_each_kind_in_order(client, db, ai_config, analyser_a
             expected += [("user", "text", f"[รูป {n}]"), ("user", "image", f"/uploads/{n}.jpg")]
         if n <= locations:
             expected.append(("user", "text", f"[ตำแหน่ง {n}]"))
+    expected.append(SESSION_EXPIRED)
     assert sent_to_ai(analyser_ai.calls[0]) == expected
 
     [report] = await reports_of(db, session_id)
@@ -380,3 +385,64 @@ async def test_analyse_job_through_handle_makes_report(client, db, ai_config, an
     assert await status_of(db, session_id) == "analysed"
     assert chats == []
     assert replies == []
+
+
+
+# E. คำขอต้องไม่จบด้วย assistant (#202)
+
+live_ai = pytest.mark.skipif(os.getenv("LIVE_AI") != "1", reason="ยิง Gemini จริง — รันด้วย LIVE_AI=1")
+
+
+async def test_conversation_ending_with_bot_is_closed_by_a_user_line(client, db, ai_config, analyser_ai):
+    """บทสนทนาจบด้วยคำตอบของบอท → role ตามจริงทุกแถว · ปิดท้ายด้วยบรรทัด user ว่าใบหมดเวลา"""
+    session_id, _ = await closed_session(
+        db,
+        ("user", "text", "น้ำท่วมปากซอย"),
+        ("assistant", "text", "ท่วมสูงแค่ไหนคะ"),
+        ("user", "text", "ประมาณข้อเท้า"),
+        ("assistant", "text", "ขอบคุณค่ะ"),
+    )
+    analyser_ai.replies = [answer({"desc": "น้ำท่วมปากซอย", "tags": ["น้ำท่วม"], "location": None, "images": []})]
+
+    await run_analyse(session_id)
+
+    assert sent_to_ai(analyser_ai.calls[0]) == [
+        ("system", "text", ANALYSER_PROMPT),
+        ("user", "text", "น้ำท่วมปากซอย"),
+        ("assistant", "text", "ท่วมสูงแค่ไหนคะ"),
+        ("user", "text", "ประมาณข้อเท้า"),
+        ("assistant", "text", "ขอบคุณค่ะ"),
+        SESSION_EXPIRED,
+    ]
+
+
+@live_ai
+async def test_live_conversation_ending_with_bot_gets_analysed(client, db):
+    """LIVE_AI=1 · บทสนทนาจบด้วยคำตอบของบอท ผ่าน run_analyse กับ Gemini จริง → ใบ analysed · มีรายงาน"""
+    from app.core import default_config
+
+    model = await db.fetchval(
+        "INSERT INTO models (provider, name) VALUES ($1, $2) RETURNING model_id",
+        default_config.PROVIDER,
+        default_config.ANALYSER_MODEL,
+    )
+    prompt = await db.fetchval(
+        "INSERT INTO prompts (prompt) VALUES ($1) RETURNING prompt_id", default_config.ANALYSER_PROMPT
+    )
+    await db.execute(
+        "INSERT INTO ai_configs (chat_model_id, chat_prompt_id, analyzer_model_id, analyzer_prompt_id) VALUES ($1, $2, $1, $2)",
+        model,
+        prompt,
+    )
+    session_id, _ = await closed_session(
+        db,
+        ("user", "text", "ฝนตกทีไรน้ำท่วมปากซอยบ้านผม"),
+        ("assistant", "text", "ท่วมสูงแค่ไหนคะ"),
+        ("user", "text", "ประมาณข้อเท้า เดินเข้าออกลำบาก เป็นทุกครั้งที่ฝนตก"),
+        ("assistant", "text", "ขอบคุณที่เล่าให้ฟังนะคะ"),
+    )
+
+    await run_analyse(session_id)
+
+    assert await db.fetchval("SELECT status FROM sessions WHERE session_id = $1", session_id) == "analysed"
+    assert len(await reports_of(db, session_id)) >= 1

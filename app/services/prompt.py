@@ -8,6 +8,10 @@ from app.models.context import ContextMessage
 from app.models.message import Message, TranscriptMessage
 
 
+# ใบปิดเพราะเงียบจนหมดเวลา — บรรทัดสุดท้ายที่ตัววิเคราะห์เห็น
+SESSION_EXPIRED = "//leave chat because session expired"
+
+
 async def ensure_default_config() -> None:
     """PSQL เป็นตัวจริง · หา ai_configs ไม่เจอ (ฐานใหม่) → ใส่ค่าจาก default_config"""
     if await database.has_ai_config():
@@ -46,8 +50,9 @@ async def build_chat_context(
 
 
 async def build_analyse_context(config: AiConfig, transcript: list[TranscriptMessage]) -> list[ContextMessage]:
-    """[system: prompt ของตัววิเคราะห์] + บทสนทนาทั้งใบ
-    รูปมีป้าย [รูป n] นำหน้า · ตำแหน่งเป็นป้าย [ตำแหน่ง n] · n นับจาก 1 แยกชนิด ตามลำดับในบทสนทนา"""
+    """[system: prompt ของตัววิเคราะห์] + บทสนทนาทั้งใบ + บรรทัดปิดท้ายฝั่ง user
+    รูปมีป้าย [รูป n] นำหน้า · ตำแหน่งเป็นป้าย [ตำแหน่ง n] · n นับจาก 1 แยกชนิด ตามลำดับในบทสนทนา
+    ปิดท้ายด้วย SESSION_EXPIRED — Gemini ไม่รับคำขอที่จบด้วย assistant (#202)"""
     prompt = await database.select_prompt(config.analyzer_prompt_id)
     context = [ContextMessage(role="system", type="text", content=prompt.prompt)]
     images = locations = 0
@@ -61,4 +66,5 @@ async def build_analyse_context(config: AiConfig, transcript: list[TranscriptMes
             context.append(ContextMessage(role=message.role, type="text", content=f"[ตำแหน่ง {locations}]"))
         else:
             context.append(ContextMessage(role=message.role, type="text", content=message.content))
+    context.append(ContextMessage(role="user", type="text", content=SESSION_EXPIRED))
     return context

@@ -1,0 +1,142 @@
+@startuml h5-sweeper
+' H5 Sweeper ปิดใบ — S7 (ทีมออกแบบได้รายงานที่มีสรุปและ tag)
+' ฟังก์ชันเท่าที่เส้นนี้เรียก · กล่อง = ไฟล์ · ลูกศร = ใครเรียกใคร
+' ต่อจาก H4: ใบเปิดอยู่ · คุยจบรอบแล้ว (IDLE) · ผู้แจ้งเงียบไป
+' design #165 → test #153 → code #166
+' งานวิเคราะห์: worker.handle ส่ง kind analyse ต่อให้ run_analyse — H6
+' ต้องตามแก้เอกสารเก่าทีหลัง (Idea: ยังไม่แก้ตอนนี้):
+'   08 structure.md — config CLOSE_AFTER_MINUTES, SWEEP_EVERY_SECONDS · sweeper เปิดด้วย WORKER_ENABLED ตัวเดียวกับ worker
+'   08 structure.md — state CLOSING
+skinparam defaultFontName "Thonburi"
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+hide circle
+hide empty members
+
+title H5 — Sweeper ปิดใบ [S7]
+
+class "main.py" as MAIN {
+  lifespan(app)
+}
+
+package "workers/" #F7F7F7 {
+  class "sweeper.py" as SW {
+    run() -> None
+    sweep() -> None
+    finish_closing(session: Session) -> None
+  }
+}
+
+package "services/" #EEF4FF {
+  class "session.py" as SESS {
+    find_silent() -> list[Session]
+    start_closing(session: Session) -> bool
+    close(session: Session) -> bool
+    stop_closing(session: Session) -> None
+    has_buffer(session: Session) -> bool
+    start_buffering(session: Session) -> bool
+  }
+  class "job.py" as JOB {
+    enqueue_analyse(session: Session) -> None
+    enqueue_chat(session: Session) -> None
+  }
+}
+
+package "clients/" #FFF4E8 {
+  class "database.py" as CL_DB {
+    select_silent_sessions(minutes: int) -> list[Session]
+    close_session(session_id: UUID, minutes: int) -> bool
+  }
+  class "redis.py" as CL_REDIS {
+    set_closing_if_idle(session_id: UUID) -> bool
+    clear_session(session_id: UUID) -> None
+    clear_state(session_id: UUID) -> None
+    buffer_length(session_id: UUID) -> int
+    set_buffering_if_idle(session_id: UUID) -> bool
+    push_job(job: Job) -> None
+  }
+}
+
+package "models/" #F0FFF0 {
+  class "job.py" as M_JOB {
+    Job
+    --
+    kind: "chat" | "analyse"
+    session_id: UUID
+  }
+}
+
+MAIN --> SW
+SW --> SESS
+SW --> JOB
+SESS --> CL_DB
+SESS --> CL_REDIS
+JOB --> CL_REDIS
+JOB ..> M_JOB : สร้าง
+
+note top of MAIN
+  <b>lifespan</b>
+  WORKER_ENABLED → เปิด sweeper.run() เป็น asyncio task คู่กับ worker
+  ปิดแอป → ยกเลิก task
+  (test ปิด WORKER_ENABLED แล้วเรียก sweep / finish_closing เอง)
+end note
+
+note right of SW
+  <b>run</b> วนไม่จบ
+  sweep() → หลับ SWEEP_EVERY_SECONDS (60) → วนใหม่
+
+  <b>sweep</b> หนึ่งรอบ
+  ทุกใบใน session.find_silent()
+    session.start_closing(session) ได้ True → finish_closing(session)
+    ได้ False (กำลังคุยอยู่) → ข้ามใบนี้
+
+  <b>finish_closing</b> ใบที่เป็น CLOSING แล้ว
+  session.close(session) ได้ True → ปิดสำเร็จ
+    job.enqueue_analyse(session)
+  ได้ False (มีข้อความเข้ามาระหว่าง CLOSING) → คืนใบ
+    session.stop_closing(session) → IDLE
+    session.has_buffer(session) และ session.start_buffering(session)
+      → job.enqueue_chat(session)  ผู้แจ้งยังได้คำตอบ
+end note
+
+note left of SESS
+  state ของใบ (Redis)
+    IDLE ⇄ BUFFERING → PROCESSING → IDLE   คุย
+    IDLE → CLOSING → closed                 ปิด
+  sessions.status (PSQL) เป็น open ตลอดช่วง CLOSING
+  เป็น closed เมื่อ close สำเร็จเท่านั้น
+
+  <b>find_silent</b> ใบ open ที่เงียบเกิน CLOSE_AFTER_MINUTES (10)
+  <b>start_closing</b> IDLE → CLOSING · True = ได้ใบนี้ไปปิด
+  <b>close</b> PSQL ใบ → closed · สำเร็จ → ลบทุก key ของใบใน Redis
+  <b>stop_closing</b> CLOSING → IDLE
+  <b>has_buffer</b> มีข้อความรอใน buffer
+end note
+
+note bottom of CL_DB
+  <b>select_silent_sessions</b>
+  SELECT ใบ WHERE status = 'open'
+    AND last_message_at < now() − minutes
+
+  <b>close_session</b> คำสั่งเดียว
+  UPDATE sessions SET status = 'closed', closed_at = now()
+  WHERE session_id = $1 AND status = 'open'
+    AND last_message_at < now() − minutes
+  True = ปิดแล้ว
+  False = มีข้อความใหม่ขยับ last_message_at → ยังไม่เงียบ
+  ผู้แจ้งพิมพ์มาหลังปิด → เปิดใบใหม่ (H2)
+end note
+
+note bottom of CL_REDIS
+  <b>set_closing_if_idle</b> = SET state CLOSING NX
+    ไม่มี key (IDLE) → ตั้ง คืน True · มีแล้ว → คืน False
+  ข้อความที่เข้ามาตอน CLOSING: controller บันทึก + ต่อ buffer ตามปกติ
+    set_buffering_if_idle ได้ False (state ไม่ว่าง) → ไม่มีงานคุย
+    finish_closing เป็นคนคืนใบ
+
+  <b>clear_session</b> = DEL ทุก key ของใบ
+    session:{id}:buffer · last_message_at · state · history
+  ตัววิเคราะห์อ่านบทสนทนาจาก PSQL (H6) ไม่ใช้ Redis
+end note
+@enduml

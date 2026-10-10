@@ -153,3 +153,30 @@ async def insert_bot_message(session_id: UUID, content: str) -> None:
 
 async def mark_answered(message_ids: list[UUID]) -> None:
     await pool.execute("UPDATE messages SET status = 'answered' WHERE message_id = ANY($1::uuid[])", message_ids)
+
+
+async def select_silent_sessions(minutes: int) -> list[Session]:
+    """ใบ open ที่ไม่มีข้อความเข้ามาเกิน minutes นาที"""
+    rows = await pool.fetch(
+        """
+        SELECT session_id, user_id FROM sessions
+        WHERE status = 'open' AND last_message_at < now() - make_interval(mins => $1)
+        """,
+        minutes,
+    )
+    return [Session(**row) for row in rows]
+
+
+async def close_session(session_id: UUID, minutes: int) -> bool:
+    """คำสั่งเดียว: ยัง open และยังเงียบเกิน minutes นาที → closed · True = ปิดแล้ว
+    False = มีข้อความใหม่ขยับ last_message_at → ยังไม่เงียบ"""
+    result = await pool.execute(
+        """
+        UPDATE sessions SET status = 'closed', closed_at = now()
+        WHERE session_id = $1 AND status = 'open'
+          AND last_message_at < now() - make_interval(mins => $2)
+        """,
+        session_id,
+        minutes,
+    )
+    return result == "UPDATE 1"

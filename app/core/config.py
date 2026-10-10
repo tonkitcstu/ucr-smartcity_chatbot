@@ -35,6 +35,10 @@ SILENCE_SECONDS = float(os.getenv("SILENCE_SECONDS") or 3)
 WORKER_ENABLED = os.getenv("WORKER_ENABLED", "true").strip().lower() in ("1", "true", "yes")
 UPLOADS_DIR = Path(os.getenv("UPLOADS_DIR") or BASE_DIR / "uploads")
 
+# sweeper: ปิดใบที่เงียบเกินกี่นาที · กวาดทุกกี่วินาที · เปิดด้วย WORKER_ENABLED ตัวเดียวกับ worker
+CLOSE_AFTER_MINUTES = _int("CLOSE_AFTER_MINUTES", 10)
+SWEEP_EVERY_SECONDS = _int("SWEEP_EVERY_SECONDS", 60)
+
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 DASHBOARD_USER = os.getenv("DASHBOARD_USER", "ucr")

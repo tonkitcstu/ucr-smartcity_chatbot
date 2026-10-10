@@ -77,3 +77,17 @@ async def clear_buffer(session_id: UUID) -> None:
 async def clear_state(session_id: UUID) -> None:
     """ลบ key = IDLE"""
     await client.delete(_key(session_id, "state"))
+
+
+async def set_closing_if_idle(session_id: UUID) -> bool:
+    """ไม่มี key = IDLE · คำสั่งเดียว: ไม่มี key → ตั้ง CLOSING คืน True · มีแล้ว → คืน False"""
+    return bool(await client.set(_key(session_id, "state"), "CLOSING", nx=True))
+
+
+async def clear_session(session_id: UUID) -> None:
+    """ลบทุก key ของใบ"""
+    await client.delete(*[_key(session_id, name) for name in ("buffer", "last_message_at", "state", "history")])
+
+
+async def buffer_length(session_id: UUID) -> int:
+    return await client.llen(_key(session_id, "buffer"))

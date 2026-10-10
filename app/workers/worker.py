@@ -19,9 +19,15 @@ async def run() -> None:
     """วนไม่จบ · คน A รอเงียบ คน B ไม่ต้องรอด้วย"""
     while True:
         next_job = await job.next()
-        task = asyncio.create_task(run_chat(next_job))
+        task = asyncio.create_task(handle(next_job))
         running.add(task)
         task.add_done_callback(running.discard)
+
+
+async def handle(job: Job) -> None:
+    """แยกงานตาม kind · chat → run_chat · kind อื่นไม่เข้า run_chat (งานวิเคราะห์ทำใน H6)"""
+    if job.kind == "chat":
+        await run_chat(job)
 
 
 async def run_chat(job: Job) -> None:

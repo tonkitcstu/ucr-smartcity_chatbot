@@ -56,11 +56,11 @@ async def open_session(user_id: UUID) -> Session:
 
 
 async def insert_message(session_id: UUID, incoming: IncomingMessage) -> Message:
-    """บันทึกเป็น ผู้แจ้ง · ยังไม่ตอบ"""
+    """บันทึกเป็น user (ผู้แจ้ง) · ยังไม่ตอบ"""
     message_id = await pool.fetchval(
         """
         INSERT INTO messages (session_id, line_event_id, line_message_id, role, type, content)
-        VALUES ($1, $2, $3, 'reporter', $4, $5)
+        VALUES ($1, $2, $3, 'user', $4, $5)
         RETURNING message_id
         """,
         session_id,

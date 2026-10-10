@@ -22,7 +22,7 @@ entity sessions {
   * session_id : uuid <<PK>>
   --
   * user_id : uuid <<FK>>
-  * status : เปิด | ปิด | วิเคราะห์แล้ว | วิเคราะห์ไม่สำเร็จ
+  * status : open | closed | analysed | analyse_failed
   * started_at : timestamptz
   * last_message_at : timestamptz
   closed_at : timestamptz
@@ -34,12 +34,12 @@ entity messages {
   * session_id : uuid <<FK>>
   line_event_id : text <<unique>>
   line_message_id : text
-  * role : ผู้แจ้ง | บอท
+  * role : user | assistant
   * type : text | image | location | sticker
   content : text
   lat : float
   lng : float
-  * status : ยังไม่ตอบ | ตอบแล้ว
+  * status : pending | answered
   * created_at : timestamptz
 }
 
@@ -72,12 +72,12 @@ entity ai_calls {
   --
   * session_id : uuid <<FK>>
   * ai_config_id : uuid <<FK>>
-  * kind : ตัวคุย | ตัววิเคราะห์
+  * kind : communicator | analyser
   * request : jsonb
   response : text (ดิบ)
   input_tokens : int
   output_tokens : int
-  * status : สำเร็จ | error | ถูกตัด stream
+  * status : ok | error | stream_cut
   error : text
   * created_at : timestamptz
 }

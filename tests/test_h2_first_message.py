@@ -41,7 +41,7 @@ async def test_first_message_opens_session_and_queues_one_chat_job(client, db, r
     assert str(message["session_id"]) == session_id
     assert message["line_event_id"] == "ev-1"
     assert message["line_message_id"] == "m-1"
-    assert message["role"] == "reporter"
+    assert message["role"] == "user"
     assert message["type"] == "text"
     assert message["content"] == "น้ำท่วมหน้าบ้าน"
     assert message["status"] == "pending"

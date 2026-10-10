@@ -26,7 +26,7 @@ CREATE TABLE messages (
     session_id      uuid NOT NULL REFERENCES sessions (session_id) ON DELETE CASCADE,
     line_event_id   text UNIQUE,
     line_message_id text,
-    role            text NOT NULL CHECK (role IN ('reporter', 'bot')),
+    role            text NOT NULL CHECK (role IN ('user', 'assistant')),
     type            text NOT NULL CHECK (type IN ('text', 'image', 'location', 'sticker')),
     content         text,
     lat             double precision,

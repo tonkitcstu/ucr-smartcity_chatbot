@@ -316,6 +316,53 @@ async def test_wrong_format_then_right_format(client, db, ai_config, analyser_ai
     assert await status_of(db, session_id) == "analysed"
 
 
+# C. ป้ายรูป / ตำแหน่ง — มี 0 · 1 · หลายอัน (m) → ป้ายที่ส่งให้ AI กับที่แปลงกลับต้องนับตรงกัน
+
+COUNTS = [0, 1, 3]
+
+
+@pytest.mark.parametrize("locations", COUNTS, ids=lambda n: f"location-{n}")
+@pytest.mark.parametrize("images", COUNTS, ids=lambda n: f"image-{n}")
+async def test_labels_count_each_kind_in_order(client, db, ai_config, analyser_ai, images, locations):
+    """รูป n รูป · ตำแหน่ง m อัน สลับกัน → ป้าย [รูป 1..n] [ตำแหน่ง 1..m] นับแยกชนิดตามลำดับ
+    AI เลือกป้ายสุดท้ายของแต่ละชนิด → รายงานได้รูปสุดท้าย พิกัดสุดท้าย · ที่เหลือไม่ผูก"""
+    items = [("user", "text", "น้ำท่วมหน้าบ้าน")]
+    pins = [(13.0 + n, 100.0 + n) for n in range(1, locations + 1)]
+    for n in range(1, max(images, locations) + 1):
+        if n <= images:
+            items.append(("user", "image", f"/uploads/{n}.jpg"))
+        if n <= locations:
+            items.append(("user", "location", pins[n - 1]))
+    session_id, photos = await closed_session(db, *items)
+    analyser_ai.replies = [
+        answer(
+            {
+                "desc": "น้ำท่วมหน้าบ้าน",
+                "tags": ["น้ำท่วม"],
+                "location": locations or None,
+                "images": [images] if images else [],
+            }
+        )
+    ]
+
+    await run_analyse(session_id)
+
+    expected = [("system", "text", ANALYSER_PROMPT), ("user", "text", "น้ำท่วมหน้าบ้าน")]
+    for n in range(1, max(images, locations) + 1):
+        if n <= images:
+            expected += [("user", "text", f"[รูป {n}]"), ("user", "image", f"/uploads/{n}.jpg")]
+        if n <= locations:
+            expected.append(("user", "text", f"[ตำแหน่ง {n}]"))
+    assert sent_to_ai(analyser_ai.calls[0]) == expected
+
+    [report] = await reports_of(db, session_id)
+    assert (report["lat"], report["lng"]) == (pins[-1] if pins else (None, None))
+    for photo in photos[:-1]:
+        assert await report_of_attachment(db, photo) is None
+    if photos:
+        assert await report_of_attachment(db, photos[-1]) == report["report_id"]
+
+
 # D. งานวิเคราะห์ผ่าน handle
 
 

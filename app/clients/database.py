@@ -1,6 +1,7 @@
 """SQL ทั้งหมดอยู่ที่นี่"""
 
 import json
+from datetime import date
 from uuid import UUID
 
 import asyncpg
@@ -10,6 +11,7 @@ from app.models.ai import AiConfig, AiModel, AiReply, Prompt
 from app.models.attachment import Attachment
 from app.models.context import ContextMessage
 from app.models.message import IncomingMessage, Message, TranscriptMessage
+from app.models.report import ReportRow
 from app.models.session import Session
 from app.models.user import User
 
@@ -251,3 +253,31 @@ async def insert_ai_config(
             await conn.fetchval(insert_model, provider, analyser_model),
             await conn.fetchval(insert_prompt, analyser_prompt),
         )
+
+
+async def select_reports(date: date | None, tag: str | None, limit: int) -> list[ReportRow]:
+    """รายงานใหม่ → เก่า + รูปของแต่ละใบ · date นับวันตามเวลาไทย · tag ต้องตรงทั้งคำ"""
+    rows = await pool.fetch(
+        """
+        SELECT r.report_id, r.session_id, s.user_id, r."desc", coalesce(r.tags, '{}') AS tags, r.lat, r.lng,
+               coalesce(array_agg(a.attachment_id ORDER BY a.created_at) FILTER (WHERE a.attachment_id IS NOT NULL),
+                        '{}') AS attachment_ids,
+               r.started_at, r.created_at
+        FROM reports r
+        JOIN sessions s ON s.session_id = r.session_id
+        LEFT JOIN attachments a ON a.report_id = r.report_id
+        WHERE ($1::date IS NULL OR (r.created_at AT TIME ZONE 'Asia/Bangkok')::date = $1)
+          AND ($2::text IS NULL OR $2 = ANY (r.tags))
+        GROUP BY r.report_id, s.user_id
+        ORDER BY r.created_at DESC
+        LIMIT $3
+        """,
+        date,
+        tag,
+        limit,
+    )
+    return [ReportRow(**row) for row in rows]
+
+
+async def select_attachment_path(attachment_id: UUID) -> str | None:
+    return await pool.fetchval("SELECT file_path FROM attachments WHERE attachment_id = $1", attachment_id)

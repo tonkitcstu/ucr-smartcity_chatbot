@@ -18,7 +18,7 @@ services/ — มันบอกได้แค่ "ไม่มีกุญแ�
 import base64
 import secrets
 
-from jose import JOSEError, jwt
+import jwt
 
 from app.core.config import (
     ALGORITHM,
@@ -43,17 +43,12 @@ class Denied(Exception):
 def read_jwt(token: str) -> dict:
     """แกะ token ของทีมแดชบอร์ด คืน `{"username", "role"}`
 
-    ตรงกับ `get_current_user` ของเดิมทุกบรรทัด รวมทั้งเงื่อนไข "ไม่มี sub = ไม่ผ่าน"
+    ลายเซ็นผิด · หมดอายุ · ไม่ใช่ token · ไม่มี sub → Denied
     เราไม่มีตารางผู้ใช้ของแดชบอร์ด ตัวตนจึงมาจากใน token เองล้วน ๆ
-
-    **รับ `JOSEError` ไม่ใช่ `JWTError`** ของเดิมบน main รับตัวหลัง ซึ่งไม่ครอบ
-    `JWKError` (มันสืบมาจาก JOSEError คนละสาย ไม่ใช่ลูกของ JWTError)
-    วันที่ทีมแดชบอร์ดย้ายไป RS256 แล้วส่ง PEM มาให้ แต่ `ALGORITHM` ใน .env
-    ยังเป็น HS256 อยู่ ทุก request จะได้ 500 แทนที่จะได้ 401 ที่ไล่ตามได้
     """
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    except JOSEError as exc:
+    except jwt.InvalidTokenError as exc:
         raise Denied("token ใช้ไม่ได้") from exc
 
     username = payload.get("sub")

@@ -3,6 +3,8 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
+from app.models.attachment import AttachmentLink
+
 
 class IncomingMessage(BaseModel):
     """ข้อความที่แกะจาก event แล้ว ยังไม่บันทึก · รูปไม่มี content"""
@@ -29,3 +31,14 @@ class TranscriptMessage(BaseModel):
     lng: float | None
     attachment_id: UUID | None
     file_path: str | None
+
+
+class DashboardMessage(BaseModel):
+    """ข้อความหนึ่งแถวใน JSON ของแดชบอร์ด · ไม่มี file_path"""
+    message_id: UUID
+    role: Literal["user", "assistant"]
+    type: Literal["text", "image", "location"]
+    content: str | None
+    lat: float | None
+    lng: float | None
+    attachment: AttachmentLink | None

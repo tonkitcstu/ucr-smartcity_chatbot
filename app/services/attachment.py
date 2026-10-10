@@ -1,4 +1,7 @@
-"""ไฟล์แนบ: ดาวน์โหลดรูปจาก LINE → เขียนลง uploads → บันทึก attachment"""
+"""ไฟล์แนบ: ดาวน์โหลดรูปจาก LINE → เขียนลง uploads → บันทึก attachment, หาไฟล์ให้แดชบอร์ด"""
+
+from pathlib import Path
+from uuid import UUID
 
 from app.clients import database, line
 from app.core.config import UPLOADS_DIR
@@ -13,3 +16,11 @@ async def save(message: Message) -> Attachment:
     path = UPLOADS_DIR / f"{message.message_id}.jpg"
     path.write_bytes(content)
     return await database.insert_attachment(message.message_id, str(path))
+
+
+async def find_file(attachment_id: UUID) -> Path | None:
+    """ไม่มีแถว หรือไฟล์ไม่อยู่บนดิสก์ → None"""
+    file_path = await database.select_attachment_path(attachment_id)
+    if file_path is None or not Path(file_path).is_file():
+        return None
+    return Path(file_path)

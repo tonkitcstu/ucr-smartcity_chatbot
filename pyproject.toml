@@ -9,6 +9,7 @@ dependencies = [
     "fastapi>=0.140.7",
     "line-bot-sdk>=3.25.0",
     "openai>=2.49.0",
+    "pyjwt>=2.15.1",
     "python-dotenv>=1.2.2",
     "redis>=6.0.0",
     "uvicorn>=0.51.0",

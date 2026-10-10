@@ -9,7 +9,7 @@ from app.core.config import DATABASE_URL
 from app.models.ai import AiConfig, AiModel, AiReply, Prompt
 from app.models.attachment import Attachment
 from app.models.context import ContextMessage
-from app.models.message import IncomingMessage, Message
+from app.models.message import IncomingMessage, Message, TranscriptMessage
 from app.models.session import Session
 from app.models.user import User
 
@@ -122,12 +122,15 @@ async def insert_ai_call(
     kind: str,
     request: list[ContextMessage],
     reply: AiReply,
+    status: str = "ok",
+    error: str | None = None,
 ) -> None:
-    """เรียกสำเร็จ · request เก็บเป็น ContextMessage · response = คำตอบดิบ"""
+    """request เก็บเป็น ContextMessage · response = คำตอบดิบ · status error เก็บเหตุไว้ใน error"""
     await pool.execute(
         """
-        INSERT INTO ai_calls (session_id, ai_config_id, kind, request, response, input_tokens, output_tokens, status)
-        VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, 'ok')
+        INSERT INTO ai_calls
+            (session_id, ai_config_id, kind, request, response, input_tokens, output_tokens, status, error)
+        VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)
         """,
         session_id,
         ai_config_id,
@@ -136,6 +139,8 @@ async def insert_ai_call(
         reply.text,
         reply.input_tokens,
         reply.output_tokens,
+        status,
+        error,
     )
 
 
@@ -180,3 +185,46 @@ async def close_session(session_id: UUID, minutes: int) -> bool:
         minutes,
     )
     return result == "UPDATE 1"
+
+
+async def select_transcript(session_id: UUID) -> list[TranscriptMessage]:
+    """ข้อความทั้งใบ เรียงตามเวลา · รูปพ่วง attachment"""
+    rows = await pool.fetch(
+        """
+        SELECT m.message_id, m.role, m.type, m.content, m.lat, m.lng, a.attachment_id, a.file_path
+        FROM messages m LEFT JOIN attachments a USING (message_id)
+        WHERE m.session_id = $1
+        ORDER BY m.created_at
+        """,
+        session_id,
+    )
+    return [TranscriptMessage(**row) for row in rows]
+
+
+async def insert_report(
+    session_id: UUID, ai_config_id: UUID, desc: str, tags: list[str], lat: float | None, lng: float | None
+) -> UUID:
+    """started_at = เวลาเปิดใบ"""
+    return await pool.fetchval(
+        """
+        INSERT INTO reports (session_id, ai_config_id, tags, lat, lng, "desc", started_at)
+        SELECT $1, $2, $3, $4, $5, $6, started_at FROM sessions WHERE session_id = $1
+        RETURNING report_id
+        """,
+        session_id,
+        ai_config_id,
+        tags,
+        lat,
+        lng,
+        desc,
+    )
+
+
+async def link_attachments(report_id: UUID, attachment_ids: list[UUID]) -> None:
+    await pool.execute(
+        "UPDATE attachments SET report_id = $1 WHERE attachment_id = ANY($2::uuid[])", report_id, attachment_ids
+    )
+
+
+async def mark_analysed(session_id: UUID) -> None:
+    await pool.execute("UPDATE sessions SET status = 'analysed' WHERE session_id = $1", session_id)

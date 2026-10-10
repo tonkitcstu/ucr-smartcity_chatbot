@@ -1,4 +1,4 @@
-"""ใบของการคุย: หา/สร้างใบ, บันทึกข้อความ, buffer, state, ประวัติที่คุยมา, ปิดใบ"""
+"""ใบของการคุย: หา/สร้างใบ, บันทึกข้อความ, buffer, state, ประวัติที่คุยมา, ปิดใบ, บทสนทนาทั้งใบ"""
 
 import time
 from uuid import UUID
@@ -6,7 +6,7 @@ from uuid import UUID
 from app.clients import database, redis
 from app.core.config import CLOSE_AFTER_MINUTES
 from app.models.context import ContextMessage
-from app.models.message import IncomingMessage, Message
+from app.models.message import IncomingMessage, Message, TranscriptMessage
 from app.models.session import Session
 from app.models.user import User
 
@@ -85,3 +85,12 @@ async def stop_closing(session: Session) -> None:
 async def has_buffer(session: Session) -> bool:
     """มีข้อความรอใน buffer"""
     return await redis.buffer_length(session.session_id) > 0
+
+
+async def read_transcript(session_id: UUID) -> list[TranscriptMessage]:
+    """ข้อความทั้งใบจาก PSQL เรียงตามเวลา — ตัววิเคราะห์ไม่ใช้ Redis"""
+    return await database.select_transcript(session_id)
+
+
+async def mark_analysed(session_id: UUID) -> None:
+    await database.mark_analysed(session_id)

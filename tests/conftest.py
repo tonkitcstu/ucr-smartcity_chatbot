@@ -21,6 +21,9 @@ os.environ["REDIS_URL"] = TEST_REDIS_URL
 os.environ["WORKER_ENABLED"] = "false"
 os.environ["SILENCE_SECONDS"] = "0.3"
 os.environ["UPLOADS_DIR"] = tempfile.mkdtemp(prefix="ucr-uploads-")
+# กุญแจ JWT ของ test — ไม่ใช้ของจริงใน .env (H7)
+os.environ["SECRET_KEY"] = "test-secret-key-shared-with-dashboard-team"
+os.environ["ALGORITHM"] = "HS256"
 
 SCHEMA = Path(__file__).resolve().parent.parent / "schema.sql"
 

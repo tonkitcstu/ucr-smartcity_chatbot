@@ -23,7 +23,7 @@ def buffer_to_context(buffer: list[Message], attachments: list[Attachment]) -> l
     ]
 
 
-async def for_chat(
+async def build_chat_context(
     config: AiConfig, history: list[ContextMessage], new_context: list[ContextMessage]
 ) -> list[ContextMessage]:
     """[system: prompt ของตัวคุย] + ประวัติ + รอบนี้"""

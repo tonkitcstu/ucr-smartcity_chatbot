@@ -42,7 +42,7 @@ async def run_chat(job: Job) -> None:
 
     config = await prompt.latest_config()
     new_context = prompt.buffer_to_context(buffer, attachments)
-    messages = await prompt.for_chat(config, await session.read_history(session_id), new_context)
+    messages = await prompt.build_chat_context(config, await session.read_history(session_id), new_context)
     answer = await communicator.chat(session_id, config, messages)
 
     await line.reply(buffer[-1].reply_token, [TextMessage(text=answer)])

@@ -48,7 +48,7 @@ package "services/" #EEF4FF {
   class "prompt.py" as PROMPT {
     latest_config() -> AiConfig
     buffer_to_context(buffer: list[Message], attachments: list[Attachment]) -> list[ContextMessage]
-    for_chat(config: AiConfig, history: list[ContextMessage], new_context: list[ContextMessage]) -> list[ContextMessage]
+    build_chat_context(config: AiConfig, history: list[ContextMessage], new_context: list[ContextMessage]) -> list[ContextMessage]
   }
   class "communicator.py" as COMM {
     chat(session_id: UUID, config: AiConfig, messages: list[ContextMessage]) -> str
@@ -184,7 +184,7 @@ note right of W
   5. รูปแต่ละรูปใน buffer → attachment.save(message)
   6. config = prompt.latest_config()
   7. new_context = prompt.buffer_to_context(buffer, attachments)
-     messages = prompt.for_chat(config, session.read_history, new_context)
+     messages = prompt.build_chat_context(config, session.read_history, new_context)
   8. answer = communicator.chat(session_id, config, messages)
   9. line.reply(reply_token ของข้อความสุดท้ายใน buffer, [answer])
   10. session.finish(session_id, buffer, new_context, answer)
@@ -226,7 +226,7 @@ note bottom of PROMPT
     text → type text · content = ข้อความ
     image → type image · content = file_path ของ attachment
 
-  <b>for_chat</b> select_prompt(config.chat_prompt_id)
+  <b>build_chat_context</b> select_prompt(config.chat_prompt_id)
     → [system · text · prompt] + history + new_context
 end note
 

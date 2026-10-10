@@ -22,6 +22,7 @@ class "main.py" as MAIN {
 package "workers/" #F7F7F7 {
   class "worker.py" as W {
     run() -> None
+    handle(job: Job) -> None
     run_chat(job: Job) -> None
     wait_for_silence(session_id: UUID) -> None
   }
@@ -86,6 +87,12 @@ package "clients/" #FFF4E8 {
 }
 
 package "models/" #F0FFF0 {
+  class "job.py" as M_JOB {
+    Job  (ใบสั่งงาน — คิว jobs ใช้ร่วมกันทุกชนิด)
+    --
+    kind: "chat" | "analyse"
+    session_id: UUID
+  }
   class "attachment.py" as M_ATT {
     Attachment
     --
@@ -145,6 +152,7 @@ ATT --> CL_DB
 PROMPT --> CL_DB
 COMM --> CL_AI
 COMM --> CL_DB
+CL_REDIS ..> M_JOB : คืน
 CL_DB ..> M_ATT : คืน
 CL_DB ..> M_AI : คืน AiConfig · AiModel · Prompt
 CL_AI ..> M_AI : คืน AiReply
@@ -156,13 +164,17 @@ note top of MAIN
   ต่อ database + redis
   WORKER_ENABLED → เปิด worker.run() เป็น asyncio task
   ปิดแอป → ยกเลิก task
-  (test ปิด WORKER_ENABLED แล้วเรียก run_chat เอง)
+  (test ปิด WORKER_ENABLED แล้วเรียก handle / run_chat เอง)
 end note
 
 note right of W
   <b>run</b> วนไม่จบ
-  job.next() → แยก run_chat(job) เป็น asyncio task ต่อใบ
+  job.next() → แยก handle(job) เป็น asyncio task ต่อใบ
   (คน A รอเงียบ คน B ไม่ต้องรอด้วย)
+
+  <b>handle</b> แยกงานตาม kind
+  chat → run_chat(job)
+  kind อื่น → ไม่เข้า run_chat (งานวิเคราะห์ทำใน H6)
 
   <b>run_chat</b> งานคุยหนึ่งใบ
   1. wait_for_silence(session_id)

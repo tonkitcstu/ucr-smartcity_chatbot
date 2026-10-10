@@ -1,0 +1,101 @@
+@startuml h8-ai-setup
+' H8 ต่อ AI ข้างนอก + ค่าเริ่มต้น prompt / model — TC5 (เรียก AI ผ่านรูปแบบมาตรฐานของ OpenAI ตัวจริงใช้ Gemini)
+' ฟังก์ชันเท่าที่เส้นนี้เรียก · กล่อง = ไฟล์ · ลูกศร = ใครเรียกใคร
+' ต่อจาก H6: ตัวคุย (H4) และตัววิเคราะห์ (H6) อ่าน ai_configs แถวล่าสุด — แต่ฐานใหม่ยังไม่มีแถวไหนเลย
+' design #193 → test #194 → code #195
+' ลอง ai.structured กับ Gemini จริงแล้ว (2026-10-10): gemini-3.5-flash-lite รับ schema ที่มี $defs ได้ · แกะด้วย Analysis ผ่าน
+' ต้องตามแก้เอกสารเก่าทีหลัง (Idea: ยังไม่แก้ตอนนี้):
+'   08 structure.md — core/default_config.py · ไม่มี seed.sql (ค่าเริ่มต้นเข้า PSQL ตอนเปิดแอป)
+' จดไว้ ทำหลัง happy path (Idea 2026-10-10): เลือก ai_config ที่ใช้ได้ (setting) — ตอนนี้ใช้แถวล่าสุดเสมอ ถอยกลับไปตัวเก่าไม่ได้
+'   ทางที่คุยไว้: ai_configs.activated_at · is_active · ตาราง settings — กลับมาออกแบบหลังทำ API (H7) และ build
+skinparam defaultFontName "Thonburi"
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+hide circle
+hide empty members
+
+title H8 — ต่อ AI ข้างนอก + ค่าเริ่มต้น prompt / model [TC5]
+
+class "main.py" as MAIN {
+  lifespan(app)
+}
+
+package "core/" #F7F7F7 {
+  class "default_config.py" as DEF {
+    PROVIDER: str
+    CHAT_MODEL: str
+    ANALYSER_MODEL: str
+    CHAT_PROMPT: str
+    ANALYSER_PROMPT: str
+  }
+}
+
+package "services/" #EEF4FF {
+  class "prompt.py" as PROMPT {
+    ensure_default_config() -> None
+  }
+}
+
+package "clients/" #FFF4E8 {
+  class "database.py" as CL_DB {
+    has_ai_config() -> bool
+    insert_ai_config(provider: str, chat_model: str, chat_prompt: str, analyser_model: str, analyser_prompt: str) -> None
+  }
+  class "ai.py" as CL_AI {
+    chat(model: str, messages: list[ContextMessage]) -> AiReply
+    structured(model: str, messages: list[ContextMessage], schema: type[BaseModel]) -> AiReply
+  }
+}
+
+MAIN --> PROMPT
+PROMPT --> DEF
+PROMPT --> CL_DB
+
+note top of MAIN
+  <b>lifespan</b>
+  ต่อ database + redis
+  → prompt.ensure_default_config()
+  → เปิด worker / sweeper (WORKER_ENABLED)
+end note
+
+note right of DEF
+  ค่าตั้งต้น ใช้เมื่อหา ai_configs ใน PSQL ไม่เจอเท่านั้น (ฐานใหม่ครั้งแรก)
+  ฐานมีแถวแล้ว PSQL เป็นตัวจริง — แก้ไฟล์นี้ไม่เปลี่ยนฐาน
+  PROVIDER = "gemini"
+  CHAT_MODEL / ANALYSER_MODEL = "gemini-3.5-flash-lite"
+    (ฟรีมีโควตาพอใช้ · flash ทำตาม prompt ดีกว่า แต่โควตาฟรีน้อย)
+  CHAT_PROMPT — ยกจาก ucr_v4.prompts (= scratch/stream-cut/nongmuang_prompt.md)
+    ตัดส่วนปุ่มตอบเร็ว (quick_replies) · ตัวคุยตอบเป็นข้อความล้วน
+    ตัด "รูปที่เขาส่งมาคุณมองไม่เห็น" · ตัวคุยได้รูปจริง (H4)
+  ANALYSER_PROMPT
+    สรุปเรื่องสภาพพื้นที่เป็นรายงาน 0..n ใบ · desc ใช้คำของผู้แจ้ง
+    tag เขียนเอง สั้น ๆ [S7]
+    location / images ตอบเป็นเลขป้าย [ตำแหน่ง n] / [รูป n] · ไม่มีให้ null / []
+    ไม่ใส่คำหยาบ ไม่ใส่ชื่อบุคคลอื่น [S7]
+    เรื่องพิพาทระหว่างคน / ไม่ใช่สภาพพื้นที่ → reports ว่าง [S7]
+end note
+
+note bottom of PROMPT
+  <b>ensure_default_config</b> PSQL เป็นตัวจริง · default ใช้ตอนหาไม่เจอ
+  has_ai_config() ได้ True → ไม่ทำอะไร (เปิดแอปซ้ำไม่เพิ่มแถว)
+  ได้ False (ฐานว่าง) → insert_ai_config(ค่าจาก default_config)
+  ตัวคุย / ตัววิเคราะห์ไม่เปลี่ยน — อ่านแถวล่าสุดจาก PSQL เหมือนเดิม
+  เปลี่ยน prompt ทีหลัง = เพิ่ม ai_configs แถวใหม่ใน PSQL — งานแอดมิน นอก H8
+end note
+
+note bottom of CL_DB
+  <b>has_ai_config</b> ai_configs มีอย่างน้อย 1 แถว
+  <b>insert_ai_config</b> transaction เดียว:
+    models 2 แถว (ตัวคุย · ตัววิเคราะห์)
+    prompts 2 แถว (ตัวคุย · ตัววิเคราะห์)
+    ai_configs 1 แถวผูกทั้งสี่
+  เปิดแอปหลาย process พร้อมกันบนฐานว่าง อาจได้ 2 ชุด — รันทีละ process (จดไว้)
+end note
+
+note bottom of CL_AI
+  ไม่เปลี่ยนจาก H4 / H6 · API_ENDPOINT + GEMINI_API_KEY
+  test ยิง Gemini จริง (ตัวคุย 1 ครั้ง · ตัววิเคราะห์ 1 ครั้ง)
+    รันเมื่อตั้ง LIVE_AI=1 เท่านั้น · ปกติข้าม ไม่กินโควตา ไม่ fail ตอนไม่มี key
+end note
+@enduml

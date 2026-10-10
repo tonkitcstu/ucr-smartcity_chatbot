@@ -136,6 +136,12 @@ note bottom of ANA
       ผ่าน → ai_calls (analyser · ok) → คืน reports
       ไม่ผ่าน → ai_calls (analyser · error · ข้อความที่ตรวจไม่ผ่าน) → ลองใหม่
   ไม่ผ่านครบ 3 ครั้ง → ใบ analyse_failed — นอก happy path (จดไว้)
+  ตรวจ = แกะด้วย Analysis (try/except) · ทุกช่องต้องมี · location ไม่มีให้ส่ง null
+
+  ยังไม่มี validator ตรวจค่าข้างใน (จดไว้):
+    เลขตำแหน่ง / เลขรูป ไม่มีป้ายคู่กัน · 0 · ติดลบ · ซ้ำในใบเดียว
+    สองรายงานเลือกรูปเดียวกัน — attachments.report_id มีช่องเดียว ใบหลังทับใบแรก
+    desc ว่าง
 end note
 
 note bottom of REP
@@ -146,7 +152,6 @@ note bottom of REP
   report_id = insert_report(...) [S7 สรุป + tag]
   link_attachments(report_id, attachment_id ของรูปที่เลือก)
   คำพูดเต็มของผู้แจ้งดูจาก session_id ของรายงาน ไม่เก็บซ้ำ
-  เลขที่ไม่มีป้ายคู่กัน — นอก happy path (จดไว้)
 end note
 
 note bottom of CL_DB

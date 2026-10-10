@@ -1,5 +1,6 @@
 import asyncio
 import os
+import tempfile
 from pathlib import Path
 
 import asyncpg
@@ -16,6 +17,10 @@ TEST_REDIS_URL = os.getenv("TEST_REDIS_URL", "redis://localhost:6379/15")
 os.environ["LINE_CHANNEL_SECRET"] = LINE_CHANNEL_SECRET
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 os.environ["REDIS_URL"] = TEST_REDIS_URL
+# worker ไม่วนเองใน test — test หยิบงานแล้วเรียก run_chat เอง (H4)
+os.environ["WORKER_ENABLED"] = "false"
+os.environ["SILENCE_SECONDS"] = "0.3"
+os.environ["UPLOADS_DIR"] = tempfile.mkdtemp(prefix="ucr-uploads-")
 
 SCHEMA = Path(__file__).resolve().parent.parent / "schema.sql"
 

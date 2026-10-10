@@ -24,11 +24,16 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 
-API_KEY = os.getenv("API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 API_ENDPOINT = os.getenv(
     "API_ENDPOINT", "https://generativelanguage.googleapis.com/v1beta/openai/"
 )
 REASONING_EFFORT = os.getenv("REASONING_EFFORT", "high").strip().lower()
+
+# worker: รอเงียบกี่วินาทีก่อนตอบ · ปิดได้ (test เรียก run_chat เอง)
+SILENCE_SECONDS = float(os.getenv("SILENCE_SECONDS") or 3)
+WORKER_ENABLED = os.getenv("WORKER_ENABLED", "true").strip().lower() in ("1", "true", "yes")
+UPLOADS_DIR = Path(os.getenv("UPLOADS_DIR") or BASE_DIR / "uploads")
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = os.getenv("ALGORITHM", "HS256")

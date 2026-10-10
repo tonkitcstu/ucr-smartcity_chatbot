@@ -43,9 +43,11 @@ async def push_job(job: Job) -> None:
 
 
 async def pop_job() -> Job:
-    """BLPOP — คิวว่างก็รอจนมีใบ"""
-    _, raw = await client.blpop(["jobs"], timeout=0)
-    return Job.model_validate_json(raw)
+    """BLPOP — คิวว่างก็รอจนมีใบ · ถามทีละ 1 วิ เพราะ redis-py ตัดการรออ่านที่ 5 วิ"""
+    while True:
+        item = await client.blpop(["jobs"], timeout=1)
+        if item:
+            return Job.model_validate_json(item[1])
 
 
 async def get_last_message_at(session_id: UUID) -> float:

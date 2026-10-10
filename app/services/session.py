@@ -49,10 +49,10 @@ async def read_history(session_id: UUID) -> list[ContextMessage]:
     return await redis.get_history(session_id)
 
 
-async def finish(session_id: UUID, buffer: list[Message], turn: list[ContextMessage], answer: str) -> None:
+async def finish(session_id: UUID, buffer: list[Message], new_context: list[ContextMessage], answer: str) -> None:
     """บันทึกคำตอบบอท · ข้อความใน buffer → ตอบแล้ว · ต่อประวัติ · ล้าง buffer · state → IDLE"""
     await database.insert_bot_message(session_id, answer)
     await database.mark_answered([message.message_id for message in buffer])
-    await redis.append_history(session_id, [*turn, ContextMessage(role="assistant", type="text", content=answer)])
+    await redis.append_history(session_id, [*new_context, ContextMessage(role="assistant", type="text", content=answer)])
     await redis.clear_buffer(session_id)
     await redis.clear_state(session_id)

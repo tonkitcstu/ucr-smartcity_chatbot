@@ -36,7 +36,7 @@ package "services/" #EEF4FF {
     start_processing(session_id: UUID) -> None
     read_buffer(session_id: UUID) -> list[Message]
     read_history(session_id: UUID) -> list[ContextMessage]
-    finish(session_id: UUID, buffer: list[Message], turn: list[ContextMessage], answer: str) -> None
+    finish(session_id: UUID, buffer: list[Message], new_context: list[ContextMessage], answer: str) -> None
   }
   class "user.py" as USER {
     line_id_for(session_id: UUID) -> str
@@ -46,8 +46,8 @@ package "services/" #EEF4FF {
   }
   class "prompt.py" as PROMPT {
     latest_config() -> AiConfig
-    turn(buffer: list[Message], attachments: list[Attachment]) -> list[ContextMessage]
-    for_chat(config: AiConfig, history: list[ContextMessage], turn: list[ContextMessage]) -> list[ContextMessage]
+    buffer_to_context(buffer: list[Message], attachments: list[Attachment]) -> list[ContextMessage]
+    for_chat(config: AiConfig, history: list[ContextMessage], new_context: list[ContextMessage]) -> list[ContextMessage]
   }
   class "communicator.py" as COMM {
     chat(session_id: UUID, config: AiConfig, messages: list[ContextMessage]) -> str
@@ -171,11 +171,11 @@ note right of W
   4. buffer = session.read_buffer
   5. รูปแต่ละรูปใน buffer → attachment.save(message)
   6. config = prompt.latest_config()
-  7. turn = prompt.turn(buffer, attachments)
-     messages = prompt.for_chat(config, session.read_history, turn)
+  7. new_context = prompt.buffer_to_context(buffer, attachments)
+     messages = prompt.for_chat(config, session.read_history, new_context)
   8. answer = communicator.chat(session_id, config, messages)
   9. line.reply(reply_token ของข้อความสุดท้ายใน buffer, [answer])
-  10. session.finish(session_id, buffer, turn, answer)
+  10. session.finish(session_id, buffer, new_context, answer)
 
   <b>wait_for_silence</b>
   ขาดอีก = SILENCE_SECONDS − (ตอนนี้ − last_message_at)
@@ -190,7 +190,7 @@ note left of SESS
   <b>finish</b>
   บันทึกคำตอบบอท (assistant · ตอบแล้ว)
   ข้อความใน buffer → ตอบแล้ว
-  ต่อประวัติด้วย turn + คำตอบบอท
+  ต่อประวัติด้วย new_context + คำตอบบอท
   ล้าง buffer · state → IDLE (ลบ key)
 end note
 
@@ -210,12 +210,12 @@ end note
 note bottom of PROMPT
   <b>latest_config</b> ai_configs แถวล่าสุด
 
-  <b>turn</b> buffer → ContextMessage · role user
+  <b>buffer_to_context</b> buffer → ContextMessage · role user
     text → type text · content = ข้อความ
     image → type image · content = file_path ของ attachment
 
   <b>for_chat</b> select_prompt(config.chat_prompt_id)
-    → [system · text · prompt] + history + turn
+    → [system · text · prompt] + history + new_context
 end note
 
 note bottom of COMM

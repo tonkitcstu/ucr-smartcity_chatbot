@@ -12,7 +12,7 @@ async def latest_config() -> AiConfig:
     return await database.select_latest_ai_config()
 
 
-def turn(buffer: list[Message], attachments: list[Attachment]) -> list[ContextMessage]:
+def buffer_to_context(buffer: list[Message], attachments: list[Attachment]) -> list[ContextMessage]:
     """buffer → ContextMessage role user · text → ข้อความ · image → path ไฟล์ของ attachment"""
     file_paths = {item.message_id: item.file_path for item in attachments}
     return [
@@ -23,7 +23,9 @@ def turn(buffer: list[Message], attachments: list[Attachment]) -> list[ContextMe
     ]
 
 
-async def for_chat(config: AiConfig, history: list[ContextMessage], turn: list[ContextMessage]) -> list[ContextMessage]:
+async def for_chat(
+    config: AiConfig, history: list[ContextMessage], new_context: list[ContextMessage]
+) -> list[ContextMessage]:
     """[system: prompt ของตัวคุย] + ประวัติ + รอบนี้"""
     prompt = await database.select_prompt(config.chat_prompt_id)
-    return [ContextMessage(role="system", type="text", content=prompt.prompt), *history, *turn]
+    return [ContextMessage(role="system", type="text", content=prompt.prompt), *history, *new_context]

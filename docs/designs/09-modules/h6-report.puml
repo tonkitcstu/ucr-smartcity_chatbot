@@ -122,6 +122,10 @@ note bottom of PROMPT
     text → type text · content = ข้อความ
     image → [text "[รูป n]"] + [image · content = file_path]
     location → text "[ตำแหน่ง n]"
+  ปิดท้ายเสมอด้วย [user · text · "//leave chat because session expired"]
+    ใบปิดเพราะเงียบจนหมดเวลา · บทสนทนาจริงจบด้วยคำตอบของบอท
+    Gemini ไม่รับคำขอที่จบด้วย assistant
+    (ai.google.dev/gemini-api/docs/whats-new-gemini-3.6)
   n นับจาก 1 แยกชนิด ตามลำดับในบทสนทนา
   ป้ายให้ AI ตอบเป็นเลข ไม่ต้องลอก UUID หรือพิกัด
   tag ให้ AI เขียนเอง — คำสั่งอยู่ใน prompt (ตาราง prompts) ไม่อยู่ในโค้ด

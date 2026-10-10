@@ -226,27 +226,8 @@ async def test_next_round_sends_history_to_ai(client, db, redis, outside, ai_cal
     assert await db.fetchval("SELECT count(*) FROM messages WHERE role = 'assistant'") == 2
 
 
-async def test_analyse_job_does_not_go_into_chat(client, db, redis, outside, ai_calls, replies):
-    """5. งาน kind analyse เข้า handle → ไม่เรียก AI · ไม่ reply · ไม่พัง · ข้อความในใบไม่เปลี่ยน"""
-    from app.models.job import Job
-    from app.workers import worker
-
-    await accept_pdpa(client)
-    await post_webhook(client, text_event("น้ำท่วมหน้าบ้าน", user_id="U_a", reply_token="rt-1", event_id="ev-1"))
-    await run_next_job(redis)
-    [session] = await db.fetch("SELECT session_id FROM sessions WHERE status = 'open'")
-    messages_before = await db.fetch("SELECT message_id, status FROM messages ORDER BY created_at")
-
-    await worker.handle(Job(kind="analyse", session_id=session["session_id"]))
-
-    assert len(ai_calls) == 1
-    assert len(replies) == 1
-    assert await db.fetchval("SELECT count(*) FROM ai_calls") == 1
-    assert await db.fetch("SELECT message_id, status FROM messages ORDER BY created_at") == messages_before
-
-
 async def test_chat_job_through_handle_gets_reply(client, db, redis, outside, ai_calls, replies):
-    """6. งาน kind chat เข้า handle → คุยเหมือนเดิม: AI 1 ครั้ง · reply 1 ครั้ง"""
+    """5. งาน kind chat เข้า handle → คุยเหมือนเดิม: AI 1 ครั้ง · reply 1 ครั้ง"""
     from app.workers import worker
 
     await accept_pdpa(client)

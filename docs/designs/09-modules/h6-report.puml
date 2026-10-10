@@ -1,0 +1,166 @@
+@startuml h6-report
+' H6 Worker ทำรายงาน — S4 (รายงานมีพิกัดเมื่อผู้แจ้งปักหมุด), S7 (รายงานมีสรุปและ tag)
+' ฟังก์ชันเท่าที่เส้นนี้เรียก · กล่อง = ไฟล์ · ลูกศร = ใครเรียกใคร
+' ต่อจาก H5: ใบ closed · งานวิเคราะห์ 1 ใบในคิว · บทสนทนาทั้งใบอยู่ใน PSQL
+' design #167 → test #154 → code #168
+' ข้อความตำแหน่งอ่านจากตาราง messages (type location · lat · lng) — controller รับตำแหน่งจาก LINE ยังไม่มี
+' ต้องตามแก้เอกสารเก่าทีหลัง (Idea: ยังไม่แก้ตอนนี้):
+'   08 structure.md — models/report.py มี Analysis · ReportDraft · tag ให้ AI เขียนเอง
+skinparam defaultFontName "Thonburi"
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+hide circle
+hide empty members
+
+title H6 — Worker ทำรายงาน [S4 S7]
+
+package "workers/" #F7F7F7 {
+  class "worker.py" as W {
+    handle(job: Job) -> None
+    run_analyse(job: Job) -> None
+  }
+}
+
+package "services/" #EEF4FF {
+  class "session.py" as SESS {
+    read_transcript(session_id: UUID) -> list[TranscriptMessage]
+    mark_analysed(session_id: UUID) -> None
+  }
+  class "prompt.py" as PROMPT {
+    latest_config() -> AiConfig
+    build_analyse_context(config: AiConfig, transcript: list[TranscriptMessage]) -> list[ContextMessage]
+  }
+  class "analyser.py" as ANA {
+    analyse(session_id: UUID, config: AiConfig, messages: list[ContextMessage]) -> list[ReportDraft]
+  }
+  class "report.py" as REP {
+    save(session_id: UUID, config: AiConfig, drafts: list[ReportDraft], transcript: list[TranscriptMessage]) -> None
+  }
+}
+
+package "clients/" #FFF4E8 {
+  class "database.py" as CL_DB {
+    select_transcript(session_id: UUID) -> list[TranscriptMessage]
+    select_latest_ai_config() -> AiConfig
+    select_prompt(prompt_id: UUID) -> Prompt
+    select_model(model_id: UUID) -> AiModel
+    insert_ai_call(session_id: UUID, ai_config_id: UUID, kind: "communicator" | "analyser", request: list[ContextMessage], reply: AiReply, status: "ok" | "error", error: str | None) -> None
+    insert_report(session_id: UUID, ai_config_id: UUID, desc: str, tags: list[str], lat: float | None, lng: float | None) -> UUID
+    link_attachments(report_id: UUID, attachment_ids: list[UUID]) -> None
+    mark_analysed(session_id: UUID) -> None
+  }
+  class "ai.py" as CL_AI {
+    structured(model: str, messages: list[ContextMessage], schema: type[BaseModel]) -> AiReply
+  }
+}
+
+package "models/" #F0FFF0 {
+  class "message.py" as M_MSG {
+    TranscriptMessage  (ข้อความหนึ่งแถวของใบ อ่านจาก PSQL)
+    --
+    message_id: UUID
+    role: "user" | "assistant"
+    type: "text" | "image" | "location"
+    content: str | None
+    lat: float | None
+    lng: float | None
+    attachment_id: UUID | None
+    file_path: str | None
+  }
+  class "report.py" as M_REP {
+    Analysis  (รูปแบบที่ AI ต้องตอบ — structured output)
+    --
+    reports: list[ReportDraft]
+    ==
+    ReportDraft  (รายงานหนึ่งใบที่ AI ร่าง)
+    --
+    desc: str
+    tags: list[str]
+    location: int | None  (เลขป้าย [ตำแหน่ง n])
+    images: list[int]  (เลขป้าย [รูป n])
+  }
+}
+
+W --> SESS
+W --> PROMPT
+W --> ANA
+W --> REP
+SESS --> CL_DB
+PROMPT --> CL_DB
+ANA --> CL_DB
+ANA --> CL_AI
+REP --> CL_DB
+CL_DB ..> M_MSG : คืน
+CL_AI ..> M_REP : schema
+ANA ..> M_REP : ตรวจรูปแบบ
+
+note right of W
+  <b>handle</b> แยกงานตาม kind
+  chat → run_chat(job)  (H4)
+  analyse → run_analyse(job)
+
+  <b>run_analyse</b> งานวิเคราะห์หนึ่งใบ
+  1. config = prompt.latest_config()
+  2. transcript = session.read_transcript(session_id)
+  3. messages = prompt.build_analyse_context(config, transcript)
+  4. drafts = analyser.analyse(session_id, config, messages)
+  5. report.save(session_id, config, drafts, transcript)
+  6. session.mark_analysed(session_id) → ใบ analysed
+  drafts ว่าง (เช่นเรื่องพิพาทระหว่างคน) → ไม่มีรายงาน · ใบยัง analysed
+end note
+
+note left of SESS
+  <b>read_transcript</b> ข้อความทั้งใบ เรียงตามเวลา
+    ทั้ง user และ assistant · รูปมี attachment_id + file_path
+  <b>mark_analysed</b> sessions.status → analysed
+end note
+
+note bottom of PROMPT
+  <b>build_analyse_context</b> select_prompt(config.analyzer_prompt_id)
+  → [system · text · prompt] + บทสนทนา (role ตามแถว)
+    text → type text · content = ข้อความ
+    image → [text "[รูป n]"] + [image · content = file_path]
+    location → text "[ตำแหน่ง n]"
+  n นับจาก 1 แยกชนิด ตามลำดับในบทสนทนา
+  ป้ายให้ AI ตอบเป็นเลข ไม่ต้องลอก UUID หรือพิกัด
+  tag ให้ AI เขียนเอง — คำสั่งอยู่ใน prompt (ตาราง prompts) ไม่อยู่ในโค้ด
+end note
+
+note bottom of ANA
+  <b>analyse</b>
+  select_model(config.analyzer_model_id)
+  ลองได้ 3 ครั้ง ส่ง messages ชุดเดิม:
+    reply = ai.structured(model.name, messages, Analysis)
+    ตรวจ reply.text ด้วย Analysis
+      ผ่าน → ai_calls (analyser · ok) → คืน reports
+      ไม่ผ่าน → ai_calls (analyser · error · ข้อความที่ตรวจไม่ผ่าน) → ลองใหม่
+  ไม่ผ่านครบ 3 ครั้ง → ใบ analyse_failed — นอก happy path (จดไว้)
+end note
+
+note bottom of REP
+  <b>save</b> ทุกใบใน drafts
+  ป้ายแปลงกลับด้วยกติกาเดียวกับ build_analyse_context:
+    รูป n = แถว image ลำดับที่ n · ตำแหน่ง n = แถว location ลำดับที่ n
+  location มีเลข → lat, lng ของแถวนั้น · ไม่มี → ว่าง [S4]
+  report_id = insert_report(...) [S7 สรุป + tag]
+  link_attachments(report_id, attachment_id ของรูปที่เลือก)
+  คำพูดเต็มของผู้แจ้งดูจาก session_id ของรายงาน ไม่เก็บซ้ำ
+  เลขที่ไม่มีป้ายคู่กัน — นอก happy path (จดไว้)
+end note
+
+note bottom of CL_DB
+  <b>select_transcript</b>
+  messages LEFT JOIN attachments WHERE session_id ORDER BY created_at
+  <b>insert_report</b> started_at = sessions.started_at ของใบ
+  <b>link_attachments</b> attachments.report_id = report_id
+  <b>insert_ai_call</b> status error เก็บข้อความใน error
+end note
+
+note bottom of CL_AI
+  <b>structured</b> OpenAI SDK · structured output (ไม่ใช้ tool calling)
+  response_format = json_schema จาก schema ที่ส่งมา
+  ไม่ stream · คืนข้อความดิบ + token
+  ContextMessage → รูปแบบ OpenAI เหมือน chat
+end note
+@enduml

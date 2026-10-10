@@ -103,3 +103,5 @@ dump.rdb
 
 # ที่ทำงานของ AI ระหว่างทำ requirement — อยู่บนเครื่องเท่านั้น
 docs/requirements/ai-workspace.md
+
+uploads/*

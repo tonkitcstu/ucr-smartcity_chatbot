@@ -1,9 +1,10 @@
-"""ใบของการคุย: หา/สร้างใบ, บันทึกข้อความ, buffer, state, ประวัติที่คุยมา"""
+"""ใบของการคุย: หา/สร้างใบ, บันทึกข้อความ, buffer, state, ประวัติที่คุยมา, ปิดใบ"""
 
 import time
 from uuid import UUID
 
 from app.clients import database, redis
+from app.core.config import CLOSE_AFTER_MINUTES
 from app.models.context import ContextMessage
 from app.models.message import IncomingMessage, Message
 from app.models.session import Session
@@ -56,3 +57,31 @@ async def finish(session_id: UUID, buffer: list[Message], new_context: list[Cont
     await redis.append_history(session_id, [*new_context, ContextMessage(role="assistant", type="text", content=answer)])
     await redis.clear_buffer(session_id)
     await redis.clear_state(session_id)
+
+
+async def find_silent() -> list[Session]:
+    """ใบ open ที่เงียบเกิน CLOSE_AFTER_MINUTES"""
+    return await database.select_silent_sessions(CLOSE_AFTER_MINUTES)
+
+
+async def start_closing(session: Session) -> bool:
+    """IDLE → CLOSING · True = ได้ใบนี้ไปปิด · False = กำลังคุย / มีคนปิดอยู่แล้ว"""
+    return await redis.set_closing_if_idle(session.session_id)
+
+
+async def close(session: Session) -> bool:
+    """PSQL ใบ → closed · สำเร็จ → ลบทุก key ของใบใน Redis · False = มีข้อความใหม่ ยังไม่เงียบ"""
+    closed = await database.close_session(session.session_id, CLOSE_AFTER_MINUTES)
+    if closed:
+        await redis.clear_session(session.session_id)
+    return closed
+
+
+async def stop_closing(session: Session) -> None:
+    """CLOSING → IDLE"""
+    await redis.clear_state(session.session_id)
+
+
+async def has_buffer(session: Session) -> bool:
+    """มีข้อความรอใน buffer"""
+    return await redis.buffer_length(session.session_id) > 0

@@ -14,7 +14,7 @@ async def open_for(user: User) -> Session:
 
 
 async def save_message(session: Session, incoming: IncomingMessage) -> Message:
-    """บันทึกเป็น ผู้แจ้ง · ยังไม่ตอบ"""
+    """บันทึกเป็น user (ผู้แจ้ง) · ยังไม่ตอบ"""
     return await database.insert_message(session.session_id, incoming)
 
 

@@ -105,7 +105,7 @@ end note
 note left of SESS
   <b>open_for</b> หาใบที่เปิดอยู่ ไม่มีก็สร้าง
 
-  <b>save_message</b> บันทึกเป็น ผู้แจ้ง · ยังไม่ตอบ
+  <b>save_message</b> บันทึกเป็น user (ผู้แจ้ง) · ยังไม่ตอบ
 
   <b>buffer</b> ต่อท้าย buffer
   + เวลาข้อความล่าสุด = ตอนนี้
@@ -125,7 +125,7 @@ note bottom of CL_DB
   — ข้อความสองอันมาพร้อมกัน ต้องได้ใบเดียว
 
   <b>insert_message</b>
-  role = reporter · status = pending
+  role = user · status = pending
 end note
 
 note bottom of CL_REDIS

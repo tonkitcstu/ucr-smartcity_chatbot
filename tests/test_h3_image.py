@@ -54,7 +54,7 @@ async def test_image_within_3s_joins_same_session_without_new_job(client, db, re
     assert str(image["session_id"]) == session_id
     assert image["line_event_id"] == "ev-2"
     assert image["line_message_id"] == "img-2"
-    assert image["role"] == "reporter"
+    assert image["role"] == "user"
     assert image["content"] is None
     assert image["status"] == "pending"
 

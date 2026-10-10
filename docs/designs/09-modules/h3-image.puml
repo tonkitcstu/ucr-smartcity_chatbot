@@ -83,7 +83,7 @@ end note
 note bottom of CL_DB
   <b>insert_message</b>
   รูป: type = image · content = NULL
-  line_message_id เก็บไว้ · role = reporter · status = pending
+  line_message_id เก็บไว้ · role = user · status = pending
   attachment ยังไม่เกิด — worker สร้างตอนดาวน์โหลด (H4)
 end note
 

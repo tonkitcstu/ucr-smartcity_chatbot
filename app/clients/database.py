@@ -1,10 +1,14 @@
 """SQL ทั้งหมดอยู่ที่นี่"""
 
+import json
 from uuid import UUID
 
 import asyncpg
 
 from app.core.config import DATABASE_URL
+from app.models.ai import AiConfig, AiModel, AiReply, Prompt
+from app.models.attachment import Attachment
+from app.models.context import ContextMessage
 from app.models.message import IncomingMessage, Message
 from app.models.session import Session
 from app.models.user import User
@@ -70,3 +74,82 @@ async def insert_message(session_id: UUID, incoming: IncomingMessage) -> Message
         incoming.content,
     )
     return Message(**incoming.model_dump(), message_id=message_id, session_id=session_id)
+
+
+async def select_line_user_id(session_id: UUID) -> str:
+    """LINE ID ของเจ้าของใบ"""
+    return await pool.fetchval(
+        "SELECT u.line_user_id FROM sessions s JOIN users u USING (user_id) WHERE s.session_id = $1",
+        session_id,
+    )
+
+
+async def insert_attachment(message_id: UUID, file_path: str) -> Attachment:
+    row = await pool.fetchrow(
+        """
+        INSERT INTO attachments (message_id, type, file_path) VALUES ($1, 'image', $2)
+        RETURNING attachment_id, message_id, file_path
+        """,
+        message_id,
+        file_path,
+    )
+    return Attachment(**row)
+
+
+async def select_latest_ai_config() -> AiConfig:
+    row = await pool.fetchrow(
+        """
+        SELECT ai_config_id, chat_model_id, chat_prompt_id, analyzer_model_id, analyzer_prompt_id
+        FROM ai_configs ORDER BY created_at DESC LIMIT 1
+        """
+    )
+    return AiConfig(**row)
+
+
+async def select_prompt(prompt_id: UUID) -> Prompt:
+    row = await pool.fetchrow("SELECT prompt_id, prompt FROM prompts WHERE prompt_id = $1", prompt_id)
+    return Prompt(**row)
+
+
+async def select_model(model_id: UUID) -> AiModel:
+    row = await pool.fetchrow("SELECT model_id, provider, name FROM models WHERE model_id = $1", model_id)
+    return AiModel(**row)
+
+
+async def insert_ai_call(
+    session_id: UUID,
+    ai_config_id: UUID,
+    kind: str,
+    request: list[ContextMessage],
+    reply: AiReply,
+) -> None:
+    """เรียกสำเร็จ · request เก็บเป็น ContextMessage · response = คำตอบดิบ"""
+    await pool.execute(
+        """
+        INSERT INTO ai_calls (session_id, ai_config_id, kind, request, response, input_tokens, output_tokens, status)
+        VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, 'ok')
+        """,
+        session_id,
+        ai_config_id,
+        kind,
+        json.dumps([message.model_dump() for message in request], ensure_ascii=False),
+        reply.text,
+        reply.input_tokens,
+        reply.output_tokens,
+    )
+
+
+async def insert_bot_message(session_id: UUID, content: str) -> None:
+    """คำตอบบอท · assistant · ตอบแล้ว"""
+    await pool.execute(
+        """
+        INSERT INTO messages (session_id, role, type, content, status)
+        VALUES ($1, 'assistant', 'text', $2, 'answered')
+        """,
+        session_id,
+        content,
+    )
+
+
+async def mark_answered(message_ids: list[UUID]) -> None:
+    await pool.execute("UPDATE messages SET status = 'answered' WHERE message_id = ANY($1::uuid[])", message_ids)

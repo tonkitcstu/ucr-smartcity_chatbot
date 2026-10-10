@@ -1,10 +1,11 @@
-"""Redis — ของชั่วคราว: buffer, เวลาข้อความล่าสุด, state, คิวงาน"""
+"""Redis — ของชั่วคราว: buffer, เวลาข้อความล่าสุด, state, ประวัติที่คุยมา, คิวงาน"""
 
 from uuid import UUID
 
 from redis.asyncio import Redis
 
 from app.core.config import REDIS_URL
+from app.models.context import ContextMessage
 from app.models.job import Job
 from app.models.message import Message
 
@@ -39,3 +40,40 @@ async def set_buffering_if_idle(session_id: UUID) -> bool:
 
 async def push_job(job: Job) -> None:
     await client.rpush("jobs", job.model_dump_json())
+
+
+async def pop_job() -> Job:
+    """BLPOP — คิวว่างก็รอจนมีใบ"""
+    _, raw = await client.blpop(["jobs"], timeout=0)
+    return Job.model_validate_json(raw)
+
+
+async def get_last_message_at(session_id: UUID) -> float:
+    return float(await client.get(_key(session_id, "last_message_at")))
+
+
+async def set_processing(session_id: UUID) -> None:
+    await client.set(_key(session_id, "state"), "PROCESSING")
+
+
+async def get_buffer(session_id: UUID) -> list[Message]:
+    items = await client.lrange(_key(session_id, "buffer"), 0, -1)
+    return [Message.model_validate_json(item) for item in items]
+
+
+async def get_history(session_id: UUID) -> list[ContextMessage]:
+    items = await client.lrange(_key(session_id, "history"), 0, -1)
+    return [ContextMessage.model_validate_json(item) for item in items]
+
+
+async def append_history(session_id: UUID, items: list[ContextMessage]) -> None:
+    await client.rpush(_key(session_id, "history"), *[item.model_dump_json() for item in items])
+
+
+async def clear_buffer(session_id: UUID) -> None:
+    await client.delete(_key(session_id, "buffer"))
+
+
+async def clear_state(session_id: UUID) -> None:
+    """ลบ key = IDLE"""
+    await client.delete(_key(session_id, "state"))

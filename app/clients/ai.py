@@ -4,6 +4,7 @@ import base64
 from pathlib import Path
 
 from openai import AsyncOpenAI
+from pydantic import BaseModel
 
 from app.core.config import API_ENDPOINT, GEMINI_API_KEY
 from app.models.ai import AiReply
@@ -27,6 +28,25 @@ async def chat(model: str, messages: list[ContextMessage]) -> AiReply:
                 usage = chunk.usage
     return AiReply(
         text="".join(parts),
+        input_tokens=usage.prompt_tokens if usage else None,
+        output_tokens=usage.completion_tokens if usage else None,
+    )
+
+
+async def structured(model: str, messages: list[ContextMessage], schema: type[BaseModel]) -> AiReply:
+    """structured output (ไม่ใช้ tool calling) · ไม่ stream · คืนข้อความดิบ + token"""
+    async with AsyncOpenAI(base_url=API_ENDPOINT, api_key=GEMINI_API_KEY) as client:
+        response = await client.chat.completions.create(
+            model=model,
+            messages=[to_openai(message) for message in messages],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {"name": schema.__name__, "schema": schema.model_json_schema()},
+            },
+        )
+    usage = response.usage
+    return AiReply(
+        text=response.choices[0].message.content or "",
         input_tokens=usage.prompt_tokens if usage else None,
         output_tokens=usage.completion_tokens if usage else None,
     )

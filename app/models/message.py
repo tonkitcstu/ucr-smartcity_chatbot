@@ -17,3 +17,15 @@ class Message(IncomingMessage):
     """ข้อความที่บันทึกแล้ว"""
     message_id: UUID
     session_id: UUID
+
+
+class TranscriptMessage(BaseModel):
+    """ข้อความหนึ่งแถวของใบ อ่านจาก PSQL · รูปมี attachment · ตำแหน่งมี lat/lng"""
+    message_id: UUID
+    role: Literal["user", "assistant"]
+    type: Literal["text", "image", "location"]
+    content: str | None
+    lat: float | None
+    lng: float | None
+    attachment_id: UUID | None
+    file_path: str | None

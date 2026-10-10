@@ -4,7 +4,7 @@ from app.clients import database
 from app.models.ai import AiConfig
 from app.models.attachment import Attachment
 from app.models.context import ContextMessage
-from app.models.message import Message
+from app.models.message import Message, TranscriptMessage
 
 
 async def latest_config() -> AiConfig:
@@ -29,3 +29,22 @@ async def build_chat_context(
     """[system: prompt ของตัวคุย] + ประวัติ + รอบนี้"""
     prompt = await database.select_prompt(config.chat_prompt_id)
     return [ContextMessage(role="system", type="text", content=prompt.prompt), *history, *new_context]
+
+
+async def build_analyse_context(config: AiConfig, transcript: list[TranscriptMessage]) -> list[ContextMessage]:
+    """[system: prompt ของตัววิเคราะห์] + บทสนทนาทั้งใบ
+    รูปมีป้าย [รูป n] นำหน้า · ตำแหน่งเป็นป้าย [ตำแหน่ง n] · n นับจาก 1 แยกชนิด ตามลำดับในบทสนทนา"""
+    prompt = await database.select_prompt(config.analyzer_prompt_id)
+    context = [ContextMessage(role="system", type="text", content=prompt.prompt)]
+    images = locations = 0
+    for message in transcript:
+        if message.type == "image":
+            images += 1
+            context.append(ContextMessage(role=message.role, type="text", content=f"[รูป {images}]"))
+            context.append(ContextMessage(role=message.role, type="image", content=message.file_path))
+        elif message.type == "location":
+            locations += 1
+            context.append(ContextMessage(role=message.role, type="text", content=f"[ตำแหน่ง {locations}]"))
+        else:
+            context.append(ContextMessage(role=message.role, type="text", content=message.content))
+    return context

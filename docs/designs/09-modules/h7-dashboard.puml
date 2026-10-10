@@ -1,0 +1,203 @@
+@startuml h7-dashboard
+' H7 ทีมออกแบบดึงรายงาน — S8 (ดึงรายงานผ่าน /api/dashboard/* ด้วย JWT · ช่องผู้แจ้งเป็น user_id ไม่ใช่ LINE ID)
+' ฟังก์ชันเท่าที่เส้นนี้เรียก · กล่อง = ไฟล์ · ลูกศร = ใครเรียกใคร
+' ต่อจาก H6: มีรายงานใน PSQL (desc · tags · lat/lng · รูปผูก report_id)
+' design #169 → test #155 → code #170
+' สามเส้น: ดึงรายงาน (ตามวัน · ตาม tag · จำกัดจำนวน) · ดึงไฟล์แนบ · ดึงบทสนทนาทั้งใบ
+' หน้าตา JSON ตอนสำเร็จ / ตอนพัง ของแต่ละเส้น: h7-dashboard-api.md
+' ช่องใน JSON มาจากตารางใน schema.sql
+' ต้องตามแก้เอกสารเก่าทีหลัง (Idea: ยังไม่แก้ตอนนี้):
+'   03 user-stories.md S8 — "หน้าตาแบบเดิม" กับเส้นอื่นใต้ /api/dashboard/*
+'   08 structure.md — models ของแดชบอร์ด · dependency python-jose
+skinparam defaultFontName "Thonburi"
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+hide circle
+hide empty members
+
+title H7 — ทีมออกแบบดึงรายงาน [S8]
+
+class "main.py" as MAIN {
+  include_router(dashboard.router)
+}
+
+package "api/" #F7F7F7 {
+  class "dashboard.py" as API {
+    GET /api/dashboard/reports(date: date | None, tag: str | None, limit: int) -> list[DashboardReport]
+    GET /api/dashboard/attachments/{attachment_id}(attachment_id: UUID) -> FileResponse
+    GET /api/dashboard/transcripts/{session_id}(session_id: UUID) -> list[DashboardMessage]
+    require_jwt(authorization: str | None) -> dict
+  }
+}
+
+package "controllers/" #F7F7F7 {
+  class "dashboard.py" as CTRL {
+    list_reports(date: date | None, tag: str | None, limit: int) -> list[DashboardReport]
+    find_attachment(attachment_id: UUID) -> Path | None
+    read_transcript(session_id: UUID) -> list[DashboardMessage]
+  }
+}
+
+package "services/" #EEF4FF {
+  class "auth.py" as AUTH {
+    read_jwt(token: str) -> dict
+  }
+  class "report.py" as REP {
+    find(date: date | None, tag: str | None, limit: int) -> list[ReportRow]
+  }
+  class "attachment.py" as ATT {
+    find_file(attachment_id: UUID) -> Path | None
+  }
+  class "session.py" as SESS {
+    read_transcript(session_id: UUID) -> list[TranscriptMessage]
+  }
+}
+
+package "clients/" #FFF4E8 {
+  class "database.py" as CL_DB {
+    select_reports(date: date | None, tag: str | None, limit: int) -> list[ReportRow]
+    select_attachment_path(attachment_id: UUID) -> str | None
+    select_transcript(session_id: UUID) -> list[TranscriptMessage]
+  }
+}
+
+package "models/" #F0FFF0 {
+  class "report.py" as M_REP {
+    ReportRow  (รายงานหนึ่งแถว + รูปของมัน อ่านจาก PSQL)
+    --
+    report_id: UUID
+    session_id: UUID
+    user_id: UUID
+    desc: str
+    tags: list[str]
+    lat: float | None
+    lng: float | None
+    attachment_ids: list[UUID]
+    started_at: datetime
+    created_at: datetime
+    ==
+    DashboardReport  (รายงานหนึ่งใบใน JSON)
+    --
+    ช่องเดียวกับ ReportRow ยกเว้น
+    attachments: list[AttachmentLink]  (แทน attachment_ids)
+  }
+  class "message.py" as M_MSG {
+    DashboardMessage  (ข้อความหนึ่งแถวใน JSON)
+    --
+    message_id: UUID
+    role: "user" | "assistant"
+    type: "text" | "image" | "location"
+    content: str | None
+    lat: float | None
+    lng: float | None
+    attachment: AttachmentLink | None
+  }
+  class "attachment.py" as M_ATT {
+    AttachmentLink
+    --
+    attachment_id: UUID
+    url: str
+  }
+}
+
+MAIN --> API
+API --> AUTH
+API --> CTRL
+CTRL --> REP
+CTRL --> ATT
+CTRL --> SESS
+REP --> CL_DB
+ATT --> CL_DB
+SESS --> CL_DB
+CL_DB ..> M_REP : คืน ReportRow
+CTRL ..> M_REP : สร้าง DashboardReport
+CTRL ..> M_MSG : สร้าง DashboardMessage
+M_REP ..> M_ATT
+M_MSG ..> M_ATT
+
+note right of API
+  <b>require_jwt</b> ด่านของทั้งสามเส้น
+  SECRET_KEY ไม่ได้ตั้ง → 503
+  ไม่มี Authorization · ไม่ใช่ Bearer → 401
+  auth.read_jwt(token) ไม่ผ่าน → 401
+  ผ่าน → คืนตัวตนจาก token
+
+  <b>/reports</b>
+  date = YYYY-MM-DD (ไม่ส่ง = ทุกวัน)
+  tag (ไม่ส่ง = ทุก tag)
+  1 ≤ limit ≤ 200 (ไม่ส่ง = 20)
+  date ผิดรูปแบบ · limit นอกช่วง → 422
+  → dashboard.list_reports(date, tag, limit)
+
+  <b>/attachments/{attachment_id}</b>
+  dashboard.find_attachment(attachment_id)
+    ได้ Path → ส่งไฟล์ image/jpeg
+    ได้ None → 404
+
+  <b>/transcripts/{session_id}</b>
+  dashboard.read_transcript(session_id)
+    ได้รายการว่าง → 404
+    มี → ส่งรายการ
+
+  id ไม่ใช่ uuid → 422
+end note
+
+note left of CTRL
+  <b>list_reports</b>
+  rows = report.find(date, tag, limit)
+  ReportRow → DashboardReport
+    ช่องเดียวกันทุกช่อง
+    user_id = รหัสผู้ใช้ของบอท ไม่ใช่ LINE ID [S8]
+    attachment_ids → attachments
+      url = /api/dashboard/attachments/{attachment_id}
+  ไม่มีรายงานที่ตรง → รายการว่าง
+
+  <b>find_attachment</b> → attachment.find_file(attachment_id)
+
+  <b>read_transcript</b>
+  session.read_transcript(session_id)
+  TranscriptMessage → DashboardMessage
+    ช่องเดียวกัน ยกเว้นไม่ส่ง file_path
+    แถวรูป → attachment = {attachment_id, url}
+    แถวอื่น → attachment ว่าง
+end note
+
+note bottom of AUTH
+  <b>read_jwt</b>
+  แกะ token ด้วย SECRET_KEY + ALGORITHM (HS256)
+  กุญแจดอกเดียวกับทีมออกแบบ — เราตรวจอย่างเดียว ไม่ออก token
+  ลายเซ็นผิด · หมดอายุ · ไม่มี sub → Denied
+  ผ่าน → {username, role}
+end note
+
+note bottom of REP
+  <b>find</b> → select_reports(date, tag, limit)
+end note
+
+note bottom of ATT
+  <b>find_file</b>
+  path = select_attachment_path(attachment_id)
+  ไม่มีแถว → None
+  ไฟล์ไม่อยู่บนดิสก์ → None
+  มี → Path
+end note
+
+note bottom of SESS
+  <b>read_transcript</b> (ตัวเดียวกับ H6)
+  ข้อความทั้งใบ เรียงตามเวลา
+  ทั้ง user และ assistant
+end note
+
+note bottom of CL_DB
+  <b>select_reports</b>
+  reports JOIN sessions (user_id)
+  LEFT JOIN attachments → array_agg(attachment_id)
+  date มา → วันที่ของ created_at (เวลาไทย) = date
+  tag มา → tag อยู่ใน tags
+  ORDER BY created_at DESC · LIMIT limit
+  <b>select_attachment_path</b> attachments.file_path
+  <b>select_transcript</b> (ตัวเดียวกับ H6)
+  messages LEFT JOIN attachments WHERE session_id ORDER BY created_at
+end note
+@enduml

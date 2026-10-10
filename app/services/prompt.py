@@ -1,10 +1,24 @@
 """ประกอบบทสนทนาที่ส่งให้ AI"""
 
 from app.clients import database
+from app.core import default_config
 from app.models.ai import AiConfig
 from app.models.attachment import Attachment
 from app.models.context import ContextMessage
 from app.models.message import Message, TranscriptMessage
+
+
+async def ensure_default_config() -> None:
+    """PSQL เป็นตัวจริง · หา ai_configs ไม่เจอ (ฐานใหม่) → ใส่ค่าจาก default_config"""
+    if await database.has_ai_config():
+        return
+    await database.insert_ai_config(
+        default_config.PROVIDER,
+        default_config.CHAT_MODEL,
+        default_config.CHAT_PROMPT,
+        default_config.ANALYSER_MODEL,
+        default_config.ANALYSER_PROMPT,
+    )
 
 
 async def latest_config() -> AiConfig:

@@ -1,0 +1,22 @@
+# ของที่ห้ามเข้า image
+.env
+.env.*
+*.pem
+*.key
+
+# ของจริงของผู้แจ้ง
+uploads/
+storage/
+
+# ไม่ใช่ของที่แอปใช้ตอนรัน
+.git
+.venv/
+venv/
+local/
+scratch/
+tests/
+docs/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+.DS_Store

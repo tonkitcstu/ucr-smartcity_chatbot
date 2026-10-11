@@ -1,0 +1,67 @@
+@startuml 2-health
+' 2. GET /health - are PSQL, Redis, worker and sweeper still there
+' Traced from code at dev-rewrite e09d47b (2026-10-11) . box = file . arrow = function calls function
+' italic = what that function does to PSQL / Redis
+skinparam defaultFontSize 14
+skinparam shadowing false
+hide footbox
+autonumber
+
+title 2. GET /health
+
+actor "Caller\n(Docker or us)" as ASK
+participant "api/\nhealth.py" as API
+participant "controllers/\nhealth.py" as CTRL
+participant "clients/\ndatabase.py\n(PSQL)" as CDB
+participant "clients/\nredis.py\n(Redis)" as CRD
+
+ASK -> API : GET /health\n<i>no JWT needed</i>
+API -> API : read_health(request, response)
+API -> CTRL : health.check(request.app.state.background)
+note right of API
+  app.state.background = the worker and sweeper tasks
+  that lifespan stored at startup (1-start-uvicorn)
+  WORKER_ENABLED off = {}
+end note
+
+CTRL -> CDB : database.ping()\n<i>SELECT 1</i>
+alt PSQL answers
+  CDB --> CTRL : True
+else cannot connect / error
+  CDB --> CTRL : False
+end
+
+CTRL -> CRD : redis.ping()\n<i>PING</i>
+alt Redis answers
+  CRD --> CTRL : True
+else cannot connect / error
+  CRD --> CTRL : False
+end
+
+CTRL -> CTRL : is_running(background.get("worker"))
+note right of CTRL
+  task is not None and not task.done()
+  no task -> False
+  worker.run() has ended -> False
+  still looping -> True
+end note
+CTRL -> CTRL : is_running(background.get("sweeper"))
+
+CTRL --> API : HealthStatus(database, redis, worker, sweeper)
+alt all 4 fields are true
+  API --> ASK : 200
+  note over ASK, CTRL
+    <code>
+    {"database": true, "redis": true, "worker": true, "sweeper": true}
+    </code>
+  end note
+else any field is false
+  API -> API : response.status_code = 503
+  API --> ASK : 503 - same JSON shape
+  note over ASK, CTRL
+    <code>
+    {"database": true, "redis": true, "worker": false, "sweeper": true}
+    </code>
+  end note
+end
+@enduml

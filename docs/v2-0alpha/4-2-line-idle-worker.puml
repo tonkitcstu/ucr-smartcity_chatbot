@@ -1,0 +1,118 @@
+@startuml 4-2-line-idle-worker
+' 4-2. The worker answers one chat job - continues from 4-1 (a Job(kind="chat") is in the queue)
+' Traced from code at dev-rewrite e09d47b (2026-10-11) . box = file . arrow = function calls function
+' italic = what that function does to PSQL / Redis / LINE / AI
+skinparam defaultFontSize 14
+skinparam shadowing false
+hide footbox
+autonumber
+
+title 4-2. The worker answers one chat job (text / image)
+
+participant "workers/\nworker.py" as WORKER
+participant "services/\njob.py" as JOB
+participant "services/\nsession.py" as SESS
+participant "services/\nuser.py" as USER
+participant "services/\nattachment.py" as ATT
+participant "services/\nprompt.py" as PROMPT
+participant "services/\ncommunicator.py" as COMM
+participant "clients/\nredis.py\n(Redis)" as CRD
+participant "clients/\ndatabase.py\n(PSQL)" as CDB
+participant "clients/\nline.py\n(LINE API)" as CL
+participant "clients/\nai.py\n(AI)" as AI
+
+== take the job ==
+WORKER -> JOB : job.next()\n<i>run() is looping, waiting here</i>
+JOB -> CRD : pop_job()\n<i>BLPOP jobs 1</i>
+CRD --> JOB : Job(kind="chat", session_id)
+JOB --> WORKER : Job
+WORKER -> WORKER : asyncio.create_task(handle(next_job))\n<i>run() goes back to waiting - other sessions do not wait for this one</i>
+WORKER -> WORKER : handle(job)\n<i>kind == "chat" -> run_chat(job)</i>
+
+== wait for silence ==
+WORKER -> WORKER : wait_for_silence(session_id)
+loop until SILENCE_SECONDS of silence
+  WORKER -> SESS : session.last_message_at(session_id)
+  SESS -> CRD : get_last_message_at(session_id)\n<i>GET session:{id}:last_message_at</i>
+  CRD --> SESS : float
+  SESS --> WORKER : float
+  note right of WORKER
+    left = SILENCE_SECONDS - (now - last_message_at)
+    left <= 0 -> leave the loop
+    left > 0 -> asyncio.sleep(left), then read again
+  end note
+end
+
+== start answering ==
+WORKER -> SESS : session.start_processing(session_id)
+SESS -> CRD : set_processing(session_id)\n<i>SET session:{id}:state PROCESSING</i>
+WORKER -> USER : user.line_id_for(session_id)
+USER -> CDB : select_line_user_id(session_id)\n<i>sessions JOIN users</i>
+CDB --> USER : line_user_id
+USER --> WORKER : line_user_id
+WORKER -> CL : line.show_loading(line_user_id)\n<i>show_loading_animation, 60 s</i>
+
+WORKER -> SESS : session.read_buffer(session_id)
+SESS -> CRD : get_buffer(session_id)\n<i>LRANGE session:{id}:buffer 0 -1</i>
+CRD --> SESS : list[Message]
+SESS --> WORKER : list[Message]
+
+== save images (only messages of type image in the buffer) ==
+loop each image message
+  WORKER -> ATT : attachment.save(message)
+  ATT -> CL : line.download_message_content(line_message_id)\n<i>get_message_content</i>
+  CL --> ATT : bytes
+  ATT -> ATT : write file UPLOADS_DIR/{message_id}.jpg\n<i>creates UPLOADS_DIR when it is not there</i>
+  ATT -> CDB : insert_attachment(message_id, file_path)\n<i>INSERT attachments</i>
+  CDB --> ATT : Attachment
+  ATT --> WORKER : Attachment
+end
+note right of WORKER : buffer has only text -> nothing is downloaded
+
+== build the conversation ==
+WORKER -> PROMPT : prompt.latest_config()
+PROMPT -> CDB : select_latest_ai_config()\n<i>newest ai_configs row</i>
+CDB --> PROMPT : AiConfig
+PROMPT --> WORKER : AiConfig
+WORKER -> PROMPT : prompt.buffer_to_context(buffer, attachments)
+PROMPT --> WORKER : list[ContextMessage]\n<i>role user - text: the text, image: the file path</i>
+WORKER -> SESS : session.read_history(session_id)
+SESS -> CRD : get_history(session_id)\n<i>LRANGE session:{id}:history 0 -1</i>
+CRD --> SESS : list[ContextMessage]
+SESS --> WORKER : list[ContextMessage]
+WORKER -> PROMPT : prompt.build_chat_context(config, history, new_context)
+PROMPT -> CDB : select_prompt(config.chat_prompt_id)
+CDB --> PROMPT : Prompt
+PROMPT --> WORKER : [system: communicator prompt] + history + this round
+
+== ask the AI ==
+WORKER -> COMM : communicator.chat(session_id, config, messages)
+COMM -> CDB : select_model(config.chat_model_id)
+CDB --> COMM : AiModel
+COMM -> AI : ai.chat(model.name, messages)\n<i>to_openai per item - image: reads the file as base64</i>\n<i>streamed call, joined into one answer + token counts</i>
+AI --> COMM : AiReply(text, input_tokens, output_tokens)
+note right of COMM
+  ai.chat raises (AI unreachable, error from the provider, ...)
+  nothing catches it: communicator.chat, run_chat and handle end with the error
+  no step below runs - no ai_calls row, no line.reply, messages stay pending
+  buffer stays, state stays PROCESSING . run() keeps looping for other jobs
+  later messages of this session: SET NX returns False -> no chat job (4-4)
+  sweeper: start_closing returns False -> the session is not closed (4-5)
+end note
+COMM -> CDB : insert_ai_call(session_id, ai_config_id,\n"communicator", messages, reply)\n<i>INSERT ai_calls, status ok</i>\n<i>request = the ContextMessage list (image = file path, not base64)</i>\n<i>response = reply.text, input_tokens, output_tokens</i>
+COMM --> WORKER : reply.text
+
+== reply to the reporter, then close the round ==
+WORKER -> CL : line.reply(buffer[-1].reply_token, [TextMessage(text=answer)])\n<i>reply token of the newest message in the buffer</i>
+WORKER -> SESS : session.finish(session_id, buffer, new_context, answer)
+SESS -> CDB : insert_bot_message(session_id, answer)\n<i>INSERT messages, role assistant, status answered</i>
+SESS -> CDB : mark_answered([message_id of every message in the buffer])\n<i>UPDATE messages SET status = answered</i>
+SESS -> CRD : append_history(session_id, [*new_context, bot answer])\n<i>RPUSH session:{id}:history</i>
+SESS -> CRD : clear_buffer(session_id)\n<i>DEL session:{id}:buffer</i>
+SESS -> CRD : clear_state(session_id)\n<i>DEL session:{id}:state -> IDLE</i>
+note right of SESS
+  left in Redis for this session: history and last_message_at
+  they stay until the session is closed (4-5)
+  the next message starts again at 4-1
+end note
+@enduml

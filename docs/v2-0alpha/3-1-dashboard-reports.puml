@@ -1,0 +1,114 @@
+@startuml 3-1-dashboard-reports
+' 3-1. GET /api/dashboard/reports - the design team pulls reports
+' Traced from code at dev-rewrite e09d47b (2026-10-11) . box = file . arrow = function calls function
+' italic = what that function does to PSQL
+' JSON in the notes was captured from the real routes on the test database (2026-10-11)
+skinparam defaultFontSize 14
+skinparam shadowing false
+hide footbox
+autonumber
+
+title 3-1. GET /api/dashboard/reports
+
+actor "Design team\nsystem" as D
+participant "api/\ndashboard.py" as API
+participant "services/\nauth.py" as AUTH
+participant "controllers/\ndashboard.py" as CTRL
+participant "services/\nreport.py" as REP
+participant "clients/\ndatabase.py\n(PSQL)" as CDB
+
+== gate: require_jwt ==
+D -> API : GET /api/dashboard/reports?date=&tag=&limit=\nAuthorization: Bearer JWT
+API -> API : require_jwt(authorization)
+alt config.SECRET_KEY is not set
+  API --> D : 503
+  note over D, API
+    <code>
+    {"detail": "SECRET_KEY is not set"}
+    </code>
+  end note
+else no Authorization / not Bearer
+  API --> D : 401
+  note over D, API
+    <code>
+    {"detail": "Could not validate credentials"}
+    </code>
+  end note
+else Bearer
+  API -> AUTH : auth.read_jwt(token)
+  AUTH -> AUTH : jwt.decode(token, SECRET_KEY, [ALGORITHM])
+  alt not a JWT / bad signature / expired / no sub
+    AUTH --> API : raise Denied
+    API --> D : 401 - same JSON as above
+  else valid
+    AUTH --> API : {"username", "role"}
+  end
+end
+
+== reports ==
+note over API
+  after the gate lets the request through, FastAPI checks
+  the query against the parameters of reports()
+    date: datetime.date | None = None
+    tag: str | None = None
+    limit: int = Query(default=20, ge=1, le=200)
+end note
+alt date is not YYYY-MM-DD / limit is not an integer in 1-200
+  API --> D : 422 - reports() is not called
+  note over D, CTRL
+    <code>
+    {
+      "detail": [
+        {
+          "type": "date_from_datetime_parsing",
+          "loc": ["query", "date"],
+          "msg": "Input should be a valid date or datetime, invalid character in year",
+          "input": "10-10-2026",
+          "ctx": {"error": "invalid character in year"}
+        }
+      ]
+    }
+    </code>
+    limit=0 -> "type": "greater_than_equal", "loc": ["query", "limit"], "ctx": {"ge": 1}
+    limit=201 -> "type": "less_than_equal", "loc": ["query", "limit"], "ctx": {"le": 200}
+    limit=abc -> "type": "int_parsing", "loc": ["query", "limit"], no "ctx"
+  end note
+else valid query (no date = every day, no tag = every tag, no limit = 20)
+  API -> API : reports(date, tag, limit)
+  API -> CTRL : dashboard.list_reports(date, tag, limit)
+  CTRL -> REP : report.find(date, tag, limit)
+  REP -> CDB : select_reports(date, tag, limit)\n<i>reports JOIN sessions LEFT JOIN attachments</i>\n<i>date = the day of reports.created_at in Thai time</i>\n<i>tag = equal to one whole tag in reports.tags</i>\n<i>newest first, LIMIT</i>
+  CDB --> REP : list[ReportRow]
+  REP --> CTRL : list[ReportRow]
+  CTRL -> CTRL : each ReportRow -> DashboardReport\n<i>link(attachment_id) turns each image into {attachment_id, url}</i>\n<i>started_at, created_at -> Thai time</i>
+  CTRL --> API : list[DashboardReport]
+  API --> D : 200
+  note over D, CDB
+    <code>
+    [
+      {
+        "report_id": "81f0cd1e-9956-4ff8-a5bd-51fac8d7acdf",
+        "session_id": "67fc905d-ccf6-49bc-b32e-ef371ffe69c8",
+        "user_id": "b6061988-2579-416f-b068-50341c0d8665",
+        "desc": "The street floods every time it rains",
+        "tags": ["flood", "drain"],
+        "lat": null,
+        "lng": null,
+        "attachments": [
+          {
+            "attachment_id": "5511ded6-9efb-4361-8add-4663db482d65",
+            "url": "/api/dashboard/attachments/5511ded6-9efb-4361-8add-4663db482d65"
+          }
+        ],
+        "started_at": "2026-10-11T15:41:19.487826+07:00",
+        "created_at": "2026-10-11T16:11:19.490601+07:00"
+      }
+    ]
+    </code>
+    user_id = the bot's own user id, not the LINE ID
+    lat / lng = lat, lng of the location message the report points to, otherwise null
+      (location messages are inserted by no function -> 6-database)
+    no report matches -> 200 with []
+  end note
+end
+@enduml

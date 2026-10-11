@@ -1,0 +1,197 @@
+@startuml 6-database
+' 6. PSQL - every table in schema.sql, and which function in clients/database.py writes / reads it
+' Traced from code at dev-rewrite e09d47b (2026-10-11)
+' * = NOT NULL . every primary key is uuid DEFAULT gen_random_uuid()
+skinparam defaultFontSize 14
+skinparam shadowing false
+skinparam linetype ortho
+hide circle
+hide empty methods
+
+title 6. PSQL - tables and the functions that touch them
+
+entity users {
+  * user_id : uuid <<PK>>
+  --
+  * line_user_id : text <<unique>>
+  * pdpa_accepted_at : timestamptz
+  * created_at : timestamptz = now()
+  ==
+  <b>written by</b> insert_user
+  <b>read by</b> select_user_by_line_id, select_line_user_id
+}
+
+entity sessions {
+  * session_id : uuid <<PK>>
+  --
+  * user_id : uuid <<FK users, cascade>>
+  * status : open | closed | analysed | analyse_failed = open
+  * started_at : timestamptz = now()
+  * last_message_at : timestamptz = now()
+  closed_at : timestamptz
+  ==
+  unique index: one open session per user_id
+  ==
+  <b>written by</b> open_session, close_session, mark_analysed
+  <b>read by</b> select_silent_sessions, select_line_user_id,
+  insert_report (started_at), select_reports (user_id)
+}
+
+entity messages {
+  * message_id : uuid <<PK>>
+  --
+  * session_id : uuid <<FK sessions, cascade>>
+  line_event_id : text <<unique>>
+  line_message_id : text
+  * role : user | assistant
+  * type : text | image | location | sticker
+  content : text
+  lat : double precision
+  lng : double precision
+  * status : pending | answered = pending
+  * created_at : timestamptz = now()
+  ==
+  <b>written by</b> insert_message, insert_bot_message, mark_answered
+  <b>read by</b> select_transcript
+}
+
+entity attachments {
+  * attachment_id : uuid <<PK>>
+  --
+  * message_id : uuid <<FK messages, cascade>>
+  report_id : uuid <<FK reports, set null>>
+  * type : image
+  * file_path : text
+  desc : text
+  * created_at : timestamptz = now()
+  ==
+  <b>written by</b> insert_attachment, link_attachments
+  <b>read by</b> select_attachment_path, select_transcript, select_reports
+}
+
+entity reports {
+  * report_id : uuid <<PK>>
+  --
+  * session_id : uuid <<FK sessions, cascade>>
+  * ai_config_id : uuid <<FK ai_configs>>
+  tags : text[]
+  lat : double precision
+  lng : double precision
+  * desc : text
+  * started_at : timestamptz
+  * created_at : timestamptz = now()
+  ==
+  <b>written by</b> insert_report
+  <b>read by</b> select_reports
+}
+
+entity ai_calls {
+  * ai_call_id : uuid <<PK>>
+  --
+  * session_id : uuid <<FK sessions, cascade>>
+  * ai_config_id : uuid <<FK ai_configs>>
+  * kind : communicator | analyser
+  * request : jsonb
+  response : text
+  input_tokens : int
+  output_tokens : int
+  * status : ok | error | stream_cut
+  error : text
+  * created_at : timestamptz = now()
+  ==
+  <b>written by</b> insert_ai_call
+  <b>read by</b> no function
+}
+
+entity ai_configs {
+  * ai_config_id : uuid <<PK>>
+  --
+  * chat_model_id : uuid <<FK models>>
+  * chat_prompt_id : uuid <<FK prompts>>
+  * analyzer_model_id : uuid <<FK models>>
+  * analyzer_prompt_id : uuid <<FK prompts>>
+  * created_at : timestamptz = now()
+  ==
+  <b>written by</b> insert_ai_config
+  <b>read by</b> has_ai_config, select_latest_ai_config
+}
+
+entity models {
+  * model_id : uuid <<PK>>
+  --
+  * provider : text
+  * name : text
+  desc : text
+  * created_at : timestamptz = now()
+  ==
+  <b>written by</b> insert_ai_config
+  <b>read by</b> select_model
+}
+
+entity prompts {
+  * prompt_id : uuid <<PK>>
+  --
+  * prompt : text
+  desc : text
+  * created_at : timestamptz = now()
+  ==
+  <b>written by</b> insert_ai_config
+  <b>read by</b> select_prompt
+}
+
+users ||--o{ sessions
+sessions ||--o{ messages
+messages ||--o{ attachments
+reports |o--o{ attachments
+sessions ||--o{ reports
+sessions ||--o{ ai_calls
+ai_configs ||--o{ reports
+ai_configs ||--o{ ai_calls
+models ||--o{ ai_configs
+prompts ||--o{ ai_configs
+
+note bottom of users
+  A row exists only after the reporter accepts PDPA.
+  insert_user: INSERT, on conflict returns the same row.
+end note
+
+note bottom of sessions
+  <b>status</b>
+  open - open_session (INSERT, or the existing open session)
+  closed - close_session (still open and silent > N minutes)
+  analysed - mark_analysed
+  analyse_failed - allowed by the CHECK, set by no function
+  <b>last_message_at</b> - set to now() by every open_session
+end note
+
+note bottom of messages
+  <b>status</b>
+  pending - insert_message (reporter's message)
+  answered - mark_answered, and insert_bot_message (bot rows)
+  <b>type</b>
+  text, image - insert_message . text - insert_bot_message
+  location, sticker - allowed by the CHECK, inserted by no function
+  <b>lat, lng</b> - written by no function
+end note
+
+note bottom of attachments
+  <b>report_id</b> - null until link_attachments
+  ties the image to a report
+  <b>file_path</b> - UPLOADS_DIR/{message_id}.jpg
+end note
+
+note bottom of ai_calls
+  <b>request</b> - list of ContextMessage as JSON
+  [{"role", "type", "content"}, ...]
+  <b>status</b>
+  ok - communicator, and analyser when the answer parses
+  error - analyser when the answer does not parse
+  stream_cut - allowed by the CHECK, set by no function
+end note
+
+note bottom of ai_configs
+  select_latest_ai_config reads the newest row.
+  insert_ai_config runs once on a fresh database:
+  2 models + 2 prompts + 1 ai_configs in one transaction.
+end note
+@enduml

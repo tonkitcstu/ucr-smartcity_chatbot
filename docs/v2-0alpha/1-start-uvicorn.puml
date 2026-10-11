@@ -1,0 +1,97 @@
+@startuml 1-start-uvicorn
+' 1. Starting the app with uvicorn - from import until it serves requests, and shutdown
+' Traced from code at dev-rewrite e09d47b (2026-10-11) . box = file . arrow = function calls function
+' italic = what that function does to PSQL / Redis
+skinparam defaultFontSize 14
+skinparam shadowing false
+hide footbox
+autonumber
+
+title 1. Start the app - uvicorn app.main:app
+
+participant "uvicorn" as UV
+participant "main.py" as MAIN
+participant "services/\nprompt.py" as PROMPT
+participant "workers/\nworker.py" as WORKER
+participant "workers/\nsweeper.py" as SWEEPER
+participant "services/\njob.py" as JOB
+participant "services/\nsession.py" as SESS
+participant "clients/\ndatabase.py\n(PSQL)" as CDB
+participant "clients/\nredis.py\n(Redis)" as CRD
+
+== import app.main ==
+UV -> MAIN : import app.main
+note right of MAIN
+  Code that runs at import time
+  core/config.py - load_dotenv(.env), then reads values into constants
+    (DATABASE_URL, REDIS_URL, WORKER_ENABLED, SECRET_KEY, ...)
+  clients/line.py - WebhookParser(LINE_CHANNEL_SECRET)
+    + Configuration(LINE_CHANNEL_ACCESS_TOKEN)
+  services/pdpa.py - reads pdpa_card.json
+  api/line.py, api/health.py - router = APIRouter()
+  api/dashboard.py - router = APIRouter(prefix="/api/dashboard",
+    dependencies=[Depends(require_jwt)])
+  clients/database.py - pool = None . clients/redis.py - client = None
+  workers/worker.py - running = set()
+end note
+MAIN -> MAIN : app = FastAPI(lifespan=lifespan)\n<i>/docs, /redoc, /openapi.json disabled</i>
+MAIN -> MAIN : include_router(line.router)\ninclude_router(dashboard.router)\ninclude_router(health.router)
+MAIN --> UV : app
+
+== lifespan - startup ==
+UV -> MAIN : lifespan(app)
+MAIN -> CDB : database.connect()\n<i>pool = asyncpg.create_pool(DATABASE_URL) - connects to PSQL now</i>
+MAIN -> CRD : redis.connect()\n<i>client = Redis.from_url(REDIS_URL, decode_responses=True)</i>\n<i>connects on the first command</i>
+MAIN -> PROMPT : prompt.ensure_default_config()
+PROMPT -> CDB : has_ai_config()\n<i>SELECT EXISTS ai_configs</i>
+alt True - ai_configs already has a row
+  CDB --> PROMPT : True
+  note right of PROMPT : does nothing
+else False - fresh database
+  CDB --> PROMPT : False
+  PROMPT -> CDB : insert_ai_config(PROVIDER, CHAT_MODEL, CHAT_PROMPT,\nANALYSER_MODEL, ANALYSER_PROMPT)\n<i>one transaction: 2 models, 2 prompts, 1 ai_configs</i>
+end
+PROMPT --> MAIN
+
+alt WORKER_ENABLED is on
+  MAIN -> WORKER : asyncio.create_task(worker.run())
+  MAIN -> SWEEPER : asyncio.create_task(sweeper.run())
+  MAIN -> MAIN : app.state.background =\n{"worker": task, "sweeper": task}
+else WORKER_ENABLED is off
+  MAIN -> MAIN : app.state.background = {}
+end
+MAIN --> UV : yield
+note over UV : starts serving requests\n/webhook/line, /api/dashboard/*, /health
+
+== worker.run() starts looping (background) ==
+loop while True
+  WORKER -> JOB : job.next()
+  JOB -> CRD : pop_job()\n<i>BLPOP jobs 1 - empty queue: asks again every 1 s,</i>\n<i>returns only when there is a job</i>
+  CRD --> JOB : Job
+  JOB --> WORKER : Job
+  WORKER -> WORKER : asyncio.create_task(handle(next_job))\n<i>keeps the task in running, then waits for the next job</i>
+  note right of WORKER : kind chat -> 4-2\nkind analyse -> 4-6
+end
+
+== sweeper.run() starts looping (background) ==
+loop while True
+  SWEEPER -> SWEEPER : sweep()
+  SWEEPER -> SESS : session.find_silent()
+  SESS -> CDB : select_silent_sessions(CLOSE_AFTER_MINUTES)\n<i>open sessions whose last_message_at is older than N minutes</i>
+  CDB --> SESS : list[Session]
+  SESS --> SWEEPER : list[Session]
+  note right of SWEEPER
+    each silent session: session.start_closing(silent)
+      True -> finish_closing(silent) -> 4-5, 4-6
+      False -> skipped
+  end note
+  SWEEPER -> SWEEPER : asyncio.sleep(SWEEP_EVERY_SECONDS)
+end
+
+== lifespan - shutdown ==
+UV -> MAIN : shutting down - resumes lifespan after yield
+MAIN -> MAIN : task.cancel()\n<i>every task in app.state.background</i>
+MAIN -> CRD : redis.close()\n<i>client.aclose()</i>
+MAIN -> CDB : database.close()\n<i>pool.close()</i>
+MAIN --> UV
+@enduml

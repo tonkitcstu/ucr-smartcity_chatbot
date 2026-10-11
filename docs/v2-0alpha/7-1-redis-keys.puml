@@ -1,0 +1,133 @@
+@startuml 7-1-redis-keys
+' 7-1. Redis - every key, what it holds, and which function in clients/redis.py touches it
+' Traced from code at dev-rewrite e09d47b (2026-10-11)
+' Sample values were captured from the real code on the test Redis (2026-10-11)
+' "<-" = the caller of that clients/redis.py function
+skinparam defaultFontSize 14
+skinparam shadowing false
+hide circle
+hide empty methods
+
+title 7-1. Redis - keys and the functions that touch them
+
+class "jobs" as JOBS <<list>> {
+  one item = one Job as JSON
+  shared by every session
+  ==
+  <b>RPUSH</b> push_job
+    <- job.enqueue_chat, job.enqueue_analyse
+  <b>BLPOP 1 s</b> pop_job
+    <- job.next (worker.run)
+}
+
+class "session:{session_id}:buffer" as BUFFER <<list>> {
+  one item = one Message as JSON
+  messages that arrived and are not answered yet
+  ==
+  <b>RPUSH</b> append_buffer
+    <- session.buffer
+  <b>LRANGE 0 -1</b> get_buffer
+    <- session.read_buffer
+  <b>LLEN</b> buffer_length
+    <- session.has_buffer
+  <b>DEL</b> clear_buffer
+    <- session.finish
+  <b>DEL</b> clear_session
+    <- session.close
+}
+
+class "session:{session_id}:last_message_at" as LAST <<string>> {
+  time.time() of the newest message
+  (seconds since epoch, float)
+  ==
+  <b>SET</b> set_last_message_at
+    <- session.buffer
+  <b>GET</b> get_last_message_at
+    <- session.last_message_at
+  <b>DEL</b> clear_session
+    <- session.close
+}
+
+class "session:{session_id}:state" as STATE <<string>> {
+  BUFFERING | PROCESSING | CLOSING
+  no key = IDLE
+  ==
+  <b>SET NX</b> set_buffering_if_idle
+    <- session.start_buffering
+  <b>SET</b> set_processing
+    <- session.start_processing
+  <b>SET NX</b> set_closing_if_idle
+    <- session.start_closing
+  <b>DEL</b> clear_state
+    <- session.finish, session.stop_closing
+  <b>DEL</b> clear_session
+    <- session.close
+}
+
+class "session:{session_id}:history" as HISTORY <<list>> {
+  one item = one ContextMessage as JSON
+  what was already said in this session
+  (reporter and bot), sent to the AI each round
+  ==
+  <b>RPUSH</b> append_history
+    <- session.finish
+  <b>LRANGE 0 -1</b> get_history
+    <- session.read_history
+  <b>DEL</b> clear_session
+    <- session.close
+}
+
+JOBS -[hidden]right- BUFFER
+BUFFER -[hidden]right- LAST
+STATE -[hidden]right- HISTORY
+
+note bottom of JOBS
+  <code>
+  {"kind": "chat",
+   "session_id": "93188814-7809-452c-b2b2-6b9fe569f940"}
+  </code>
+  kind = "chat" | "analyse"
+end note
+
+note bottom of BUFFER
+  <code>
+  {"line_event_id": "ev-1",
+   "line_message_id": "m-1",
+   "reply_token": "rt-text",
+   "type": "text",
+   "content": "The street floods every time it rains",
+   "message_id": "ba6e2ee6-1396-4f60-9763-646abb1ea87d",
+   "session_id": "93188814-7809-452c-b2b2-6b9fe569f940"}
+  </code>
+  type = "text" | "image" . image: content is null
+end note
+
+note bottom of LAST
+  <code>
+  1791710309.949569
+  </code>
+end note
+
+note bottom of STATE
+  <code>
+  BUFFERING
+  </code>
+  transitions: 7-2-redis-session-state
+end note
+
+note bottom of HISTORY
+  <code>
+  {"role": "user", "type": "text",
+   "content": "The street floods every time it rains"}
+  {"role": "assistant", "type": "text",
+   "content": "How deep does the water get?"}
+  </code>
+  image: type = "image", content = the file path
+end note
+
+note as GLOBAL
+  No key has an expiry - no command sets one (TTL -1).
+  The session keys go away only through clear_buffer, clear_state and clear_session.
+  ping() sends PING and touches no key.
+end note
+@enduml

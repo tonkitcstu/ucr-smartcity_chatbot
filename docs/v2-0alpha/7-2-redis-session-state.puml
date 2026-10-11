@@ -1,0 +1,49 @@
+@startuml 7-2-redis-session-state
+' 7-2. Redis - the state of one session (key session:{session_id}:state) and who moves it
+' Traced from code at dev-rewrite e09d47b (2026-10-11)
+' Each arrow: who calls -> services/session.py function -> clients/redis.py function (Redis command)
+skinparam defaultFontSize 14
+skinparam shadowing false
+
+title 7-2. Redis - session state
+
+state "IDLE" as IDLE : no session:{id}:state key
+state "BUFFERING" as BUFFERING : state = BUFFERING\none chat job is queued or waiting for silence
+state "PROCESSING" as PROCESSING : state = PROCESSING\nthe worker is answering
+state "CLOSING" as CLOSING : state = CLOSING\nthe sweeper is closing the session
+
+[*] --> IDLE : session.open_for opens a session in PSQL\nRedis has no key for it yet
+
+IDLE --> BUFFERING : controllers/line.on_message\nsession.start_buffering -> set_buffering_if_idle (SET NX)\nthen job.enqueue_chat
+BUFFERING --> PROCESSING : worker.run_chat, after wait_for_silence\nsession.start_processing -> set_processing (SET)
+PROCESSING --> IDLE : worker.run_chat, after line.reply\nsession.finish -> clear_state (DEL)
+
+IDLE --> CLOSING : sweeper.sweep, session silent > CLOSE_AFTER_MINUTES\nsession.start_closing -> set_closing_if_idle (SET NX)
+CLOSING --> IDLE : sweeper.finish_closing, session.close returned False\nsession.stop_closing -> clear_state (DEL)
+CLOSING --> [*] : sweeper.finish_closing, session.close returned True\nclear_session (DEL buffer, last_message_at, state, history)\nthen job.enqueue_analyse
+
+note right of IDLE
+  a message arrives -> 4-1
+  SET NX succeeds only from IDLE, so only one caller
+  wins the move to BUFFERING or to CLOSING
+end note
+
+note right of BUFFERING
+  a message arrives -> 4-3
+  the sweeper skips this session
+end note
+
+note right of PROCESSING
+  a message arrives -> 4-4
+  the sweeper skips this session
+  run_chat ends with an error before session.finish
+  -> the key stays PROCESSING (4-2)
+end note
+
+note left of CLOSING
+  a message arrives -> 4-5
+  after CLOSING -> IDLE, if the buffer is not empty:
+  sweeper.finish_closing calls session.start_buffering
+  and job.enqueue_chat (IDLE -> BUFFERING)
+end note
+@enduml

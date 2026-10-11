@@ -1,0 +1,84 @@
+@startuml 4-5-line-closing
+' 4-5. A message (text / image) arrives while the session is CLOSING - the sweeper is closing a silent session
+' Traced from code at dev-rewrite e09d47b (2026-10-11) . box = file . arrow = function calls function
+' italic = what that function does to PSQL / Redis
+' CLOSING = session:{id}:state is CLOSING (set by session.start_closing in sweeper.sweep)
+skinparam defaultFontSize 14
+skinparam shadowing false
+hide footbox
+autonumber
+
+title 4-5. Message arrives while the session is CLOSING
+
+actor "LINE\n(reporter)" as LINE
+participant "controllers/\nline.py" as CTRL
+participant "workers/\nsweeper.py" as SWEEPER
+participant "services/\nsession.py" as SESS
+participant "services/\njob.py" as JOB
+participant "clients/\ndatabase.py\n(PSQL)" as CDB
+participant "clients/\nredis.py\n(Redis)" as CRD
+
+== the sweeper starts closing a silent session ==
+SWEEPER -> SWEEPER : sweep()
+SWEEPER -> SESS : session.find_silent()
+SESS -> CDB : select_silent_sessions(CLOSE_AFTER_MINUTES)\n<i>open sessions whose last_message_at is older than N minutes</i>
+CDB --> SESS : [Session]
+SESS --> SWEEPER : [Session]
+SWEEPER -> SESS : session.start_closing(silent)
+SESS -> CRD : set_closing_if_idle(session_id)\n<i>SET session:{id}:state CLOSING NX</i>
+CRD --> SESS : True
+SESS --> SWEEPER : True
+note right of SWEEPER
+  no key (IDLE) -> set succeeds -> state = CLOSING
+  False (already BUFFERING, PROCESSING or CLOSING) -> skips this session
+end note
+
+== a new message hits the webhook now ==
+LINE -> CTRL : POST /webhook/line -> ... -> on_message(event)
+ref over CTRL, CRD
+  same as 4-1 from user.find_by_line_id through session.buffer(message)
+  session.open_for: the session is still open in PSQL -> same session, last_message_at = now()
+  the message is saved to PSQL (pending) and appended to the buffer
+end ref
+CTRL -> SESS : session.start_buffering(current)
+SESS -> CRD : set_buffering_if_idle(session_id)\n<i>SET session:{id}:state BUFFERING NX</i>
+CRD --> SESS : False
+SESS --> CTRL : False
+note right of CTRL
+  the key already exists (CLOSING) -> set fails
+  job.enqueue_chat is not called
+end note
+CTRL --> LINE : 200 "OK"
+
+== the sweeper continues - close fails, session is handed back ==
+SWEEPER -> SWEEPER : finish_closing(silent)
+SWEEPER -> SESS : session.close(silent)
+SESS -> CDB : close_session(session_id, CLOSE_AFTER_MINUTES)\n<i>UPDATE sessions SET status = closed</i>\n<i>WHERE still open and still silent for more than N minutes</i>
+CDB --> SESS : False
+note right of SESS
+  last_message_at just moved -> no row updated
+  redis.clear_session is not called
+end note
+SESS --> SWEEPER : False
+SWEEPER -> SESS : session.stop_closing(silent)
+SESS -> CRD : clear_state(session_id)\n<i>DEL session:{id}:state -> IDLE</i>
+SWEEPER -> SESS : session.has_buffer(silent)
+SESS -> CRD : buffer_length(session_id)\n<i>LLEN session:{id}:buffer</i>
+CRD --> SESS : 1
+SESS --> SWEEPER : True
+SWEEPER -> SESS : session.start_buffering(silent)
+SESS -> CRD : set_buffering_if_idle(session_id)
+CRD --> SESS : True
+SESS --> SWEEPER : True
+SWEEPER -> JOB : job.enqueue_chat(silent)
+JOB -> CRD : push_job(Job(kind="chat", session_id))\n<i>RPUSH jobs</i>
+note right of SWEEPER
+  the worker takes this chat job and answers as in 4-2
+  has_buffer returns False (nothing waiting) -> ends at IDLE, no job queued
+end note
+
+note over LINE, CRD
+  a message that arrives after session.close has succeeded (session is closed in PSQL - 4-6)
+  session.open_for opens a new session -> the new session has no state -> follows 4-1
+end note
+@enduml

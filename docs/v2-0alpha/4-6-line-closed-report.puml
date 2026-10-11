@@ -1,0 +1,118 @@
+@startuml 4-6-line-closed-report
+' 4-6. The session stays silent, no message interrupts - sweeper closes it -> worker analyses -> reports
+' Traced from code at dev-rewrite e09d47b (2026-10-11) . box = file . arrow = function calls function
+' italic = what that function does to PSQL / Redis / AI
+skinparam defaultFontSize 14
+skinparam shadowing false
+hide footbox
+autonumber
+
+title 4-6. Session stays silent -> closed -> reports
+
+participant "workers/\nsweeper.py" as SWEEPER
+participant "workers/\nworker.py" as WORKER
+participant "services/\nsession.py" as SESS
+participant "services/\njob.py" as JOB
+participant "services/\nprompt.py" as PROMPT
+participant "services/\nanalyser.py" as ANA
+participant "services/\nreport.py" as REP
+participant "clients/\ndatabase.py\n(PSQL)" as CDB
+participant "clients/\nredis.py\n(Redis)" as CRD
+participant "clients/\nai.py\n(AI)" as AI
+
+== the sweeper closes the session ==
+SWEEPER -> SWEEPER : sweep()
+SWEEPER -> SESS : session.find_silent()
+SESS -> CDB : select_silent_sessions(CLOSE_AFTER_MINUTES)
+CDB --> SESS : [Session]
+SESS --> SWEEPER : [Session]
+SWEEPER -> SESS : session.start_closing(silent)
+SESS -> CRD : set_closing_if_idle(session_id)\n<i>SET session:{id}:state CLOSING NX</i>
+CRD --> SESS : True
+SESS --> SWEEPER : True
+SWEEPER -> SWEEPER : finish_closing(silent)
+SWEEPER -> SESS : session.close(silent)
+SESS -> CDB : close_session(session_id, CLOSE_AFTER_MINUTES)\n<i>UPDATE sessions SET status = closed, closed_at = now()</i>\n<i>WHERE still open and still silent for more than N minutes</i>
+CDB --> SESS : True
+SESS -> CRD : clear_session(session_id)\n<i>DEL the session's buffer, last_message_at, state, history</i>
+SESS --> SWEEPER : True
+SWEEPER -> JOB : job.enqueue_analyse(silent)
+JOB -> CRD : push_job(Job(kind="analyse", session_id))\n<i>RPUSH jobs</i>
+
+== the worker takes the analyse job ==
+WORKER -> JOB : job.next()
+JOB -> CRD : pop_job()\n<i>BLPOP jobs 1</i>
+CRD --> JOB : Job(kind="analyse", session_id)
+JOB --> WORKER : Job
+WORKER -> WORKER : asyncio.create_task(handle(next_job))
+WORKER -> WORKER : handle(job)\n<i>kind == "analyse" -> run_analyse(job)</i>
+
+== build the whole conversation ==
+WORKER -> PROMPT : prompt.latest_config()
+PROMPT -> CDB : select_latest_ai_config()
+CDB --> PROMPT : AiConfig
+PROMPT --> WORKER : AiConfig
+WORKER -> SESS : session.read_transcript(session_id)
+SESS -> CDB : select_transcript(session_id)\n<i>messages LEFT JOIN attachments, ordered by created_at</i>
+CDB --> SESS : list[TranscriptMessage]
+SESS --> WORKER : list[TranscriptMessage]
+WORKER -> PROMPT : prompt.build_analyse_context(config, transcript)
+PROMPT -> CDB : select_prompt(config.analyzer_prompt_id)
+CDB --> PROMPT : Prompt
+PROMPT --> WORKER : list[ContextMessage]
+note right of PROMPT
+  [system: analyser prompt]
+  + the whole conversation
+      image -> a text label for image n, then the image
+      location -> a text label for location n
+      n counts from 1, per kind, in conversation order
+  + user: SESSION_EXPIRED (closing line)
+end note
+
+== ask the AI ==
+WORKER -> ANA : analyser.analyse(session_id, config, messages)
+ANA -> CDB : select_model(config.analyzer_model_id)
+CDB --> ANA : AiModel
+loop at most ATTEMPTS (3) times, same messages
+  ANA -> AI : ai.structured(model.name, messages, Analysis)\n<i>response_format = json_schema of Analysis, not streamed</i>
+  AI --> ANA : AiReply
+  ANA -> ANA : Analysis.model_validate_json(reply.text)
+  alt parses
+    ANA -> CDB : insert_ai_call(session_id, ai_config_id,\n"analyser", messages, reply)\n<i>status ok</i>
+    ANA --> WORKER : analysis.reports - list[ReportDraft], 0..n drafts
+  else does not parse (ValidationError)
+    ANA -> CDB : insert_ai_call(..., "analyser", messages, reply,\n"error", str(error))
+    note right of ANA
+      fewer than 3 attempts so far -> try again
+      3rd attempt -> raises out of run_analyse
+        report.save and session.mark_analysed are not reached
+        the session stays at status closed
+    end note
+  end
+end
+
+== save the reports ==
+WORKER -> REP : report.save(session_id, config, drafts, transcript)
+loop each draft
+  REP -> REP : draft.location = n -> lat, lng of the n-th location row\n<i>no location -> None</i>
+  REP -> CDB : insert_report(session_id, ai_config_id,\ndesc, tags, lat, lng)\n<i>INSERT reports, started_at = when the session opened</i>
+  CDB --> REP : report_id
+  REP -> CDB : link_attachments(report_id,\n[attachment_id of the images numbered in draft.images])\n<i>UPDATE attachments SET report_id</i>
+end
+note right of REP
+  0 drafts -> no report row, the session still becomes analysed
+end note
+WORKER -> SESS : session.mark_analysed(session_id)
+SESS -> CDB : mark_analysed(session_id)\n<i>UPDATE sessions SET status = analysed</i>
+
+note over WORKER, AI
+  run_analyse ends with an error before session.mark_analysed -> the session stays at status closed
+    build_analyse_context: an image row with no attachments row (file never saved - 4-4 case B)
+      -> ValidationError, the AI is not called
+    ai.structured raises (AI unreachable, ...) -> no ai_calls row
+    the answer does not parse 3 times -> 3 ai_calls rows with status error
+    report.save: a draft names image n or location n that the session does not have -> IndexError
+      reports inserted before that point stay in PSQL
+  select_silent_sessions reads only open sessions -> no function queues an analyse job for a closed session again
+end note
+@enduml

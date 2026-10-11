@@ -11,12 +11,14 @@
 | ของ | ใช้ทำอะไร |
 |---|---|
 | Python 3.12 ขึ้นไป + [uv](https://docs.astral.sh/uv/) | รันแอป ลง dependency จาก `uv.lock` |
-| PostgreSQL | ของถาวร: ผู้แจ้ง ใบ ข้อความ รายงาน |
+| PostgreSQL + PostGIS | ของถาวร: ผู้แจ้ง ใบ ข้อความ รายงาน · `schema.sql` เปิด extension `postgis` (macOS: `brew install postgis`) |
 | Redis | ของชั่วคราว: ข้อความที่ยังไม่ตอบ state ของใบ คิวงาน |
 | key ของ Gemini | AI ที่คุยกับผู้แจ้งและทำรายงาน |
 | LINE OA ช่องทดสอบ | ช่องทางแชท — ห้ามใช้ช่องจริงตอนพัฒนา |
 
 แอปต่อ PostgreSQL ตอนเปิด ต่อไม่ได้แอปไม่ขึ้น
+
+ไม่อยากลงเอง: ข้ามไป [รันด้วย Docker](#รันด้วย-docker) ต้องมีแค่ Docker
 
 ## ตั้งเครื่องใหม่
 
@@ -55,6 +57,44 @@ curl -i http://localhost:8000/health
 ```
 
 ต่อ LINE: `ngrok http 8000` แล้วตั้ง webhook ของช่องทดสอบเป็น `https://<ngrok>/webhook/line`
+
+## รันด้วย Docker
+
+ต้องมีแค่ Docker — ไม่ต้องลง Python, PostgreSQL หรือ Redis เอง
+
+```bash
+cp .env.example .env            # เติมค่าจริง และตั้ง POSTGRES_PASSWORD
+docker compose up -d --build
+docker compose ps               # ทั้ง 3 ต้องเป็น healthy
+curl -i http://localhost:8000/health
+```
+
+ได้ 3 container
+
+| container | มีอะไร | ข้อมูลอยู่ที่ volume |
+|---|---|---|
+| `app` | แอป (FastAPI + worker + sweeper ใน process เดียว) | `uploads` — รูป |
+| `postgres` | PostgreSQL 18 + PostGIS · สร้างฐาน `ucr-chat-v2-alpha` และรัน `schema.sql` ตอนฐานยังว่าง | `pgdata` |
+| `redis` | Redis 8 | `redisdata` |
+
+ใน container เรียกกันด้วยชื่อ service — compose ใส่ `DATABASE_URL` กับ `REDIS_URL` ทับค่าใน `.env` ให้
+`postgres` กับ `redis` ไม่เปิด port ออกนอกเครื่อง
+
+| คำสั่ง | ทำอะไร |
+|---|---|
+| `docker compose up -d --build` | แก้โค้ดแล้ว — สร้าง image ใหม่และเปิด |
+| `docker compose up -d` | แก้แค่ค่าใน `.env` |
+| `docker compose logs -f app` | ดู log ของแอป |
+| `docker compose restart app` | เปิดแอปใหม่ |
+| `docker compose down` | ปิดทั้งระบบ ข้อมูลยังอยู่ |
+| `docker compose down -v` | ปิดและ**ลบฐาน รูป และ Redis ทั้งหมด** |
+
+ต้องรู้:
+
+- `POSTGRES_PASSWORD` ใช้ตอนสร้างฐานครั้งแรกเท่านั้น แก้ทีหลังฐานยังใช้รหัสเดิม แอปจะต่อไม่ได้
+- ชื่อ volume ขึ้นต้นด้วยชื่อโฟลเดอร์ของ repo — เปลี่ยนชื่อโฟลเดอร์แล้ว compose จะสร้าง volume เปล่าชุดใหม่
+- Redis ดับแล้วกลับมา worker ไม่กลับมาเอง `/health` ตอบ 503 — สั่ง `docker compose restart app`
+- port 8000 ถูกใช้อยู่: ตั้ง `APP_PORT` ใน `.env`
 
 ## ทางเข้าที่มี
 

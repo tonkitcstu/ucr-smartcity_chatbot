@@ -79,6 +79,7 @@ async def closed_session(db, *items):
     """ใบที่ sweeper ปิดแล้ว · บทสนทนาตามลำดับ items · คืน (session_id, attachment_id ของรูปตามลำดับ)
 
     item: ("user" | "assistant", "text", ข้อความ) · ("user", "image", file_path) · ("user", "location", (lat, lng))
+          ("user", "sticker", keywords คั่นด้วยจุลภาค | None)
     """
     user_id = await db.fetchval(
         "INSERT INTO users (line_user_id, pdpa_accepted_at) VALUES ('U_a', now()) RETURNING user_id"
@@ -93,7 +94,7 @@ async def closed_session(db, *items):
     )
     attachment_ids = []
     for order, (role, kind, value) in enumerate(items):
-        content = value if kind == "text" else None
+        content = value if kind in ("text", "sticker") else None
         lat, lng = value if kind == "location" else (None, None)
         message_id = await db.fetchval(
             """
@@ -446,3 +447,34 @@ async def test_live_conversation_ending_with_bot_gets_analysed(client, db):
 
     assert await db.fetchval("SELECT status FROM sessions WHERE session_id = $1", session_id) == "analysed"
     assert len(await reports_of(db, session_id)) >= 1
+
+
+# --- H9 รับตำแหน่งและสติกเกอร์ — S13 · spec ใน #219 · แบบ docs/designs/09-modules/h9-location-sticker.puml ---
+
+
+async def test_sticker_rows_reach_analyser_as_notes(client, db, ai_config, analyser_ai):
+    """H9-13. ใบมีข้อความ + สติกเกอร์มี keywords + สติกเกอร์ไม่มี keywords → ตัววิเคราะห์ได้ป้ายทั้งสองแบบตรงลำดับ · รายงาน 1 ใบ · analysed"""
+    session_id, _ = await closed_session(
+        db,
+        ("user", "sticker", "cony, sally, Staring, hi, wave, Hello"),
+        ("assistant", "text", "สวัสดีค่ะ มีเรื่องแถวบ้านอยากเล่าไหมคะ"),
+        ("user", "text", "ขยะล้นถังหน้าตลาด"),
+        ("user", "sticker", None),
+    )
+    analyser_ai.replies = [answer({"desc": "ขยะล้นถังหน้าตลาด", "tags": ["ขยะ"], "location": None, "images": []})]
+
+    await run_analyse(session_id)
+
+    assert len(analyser_ai.calls) == 1
+    assert sent_to_ai(analyser_ai.calls[0]) == [
+        ("system", "text", ANALYSER_PROMPT),
+        ("user", "text", "[ระบบ: ผู้แจ้งส่งสติกเกอร์ คำบรรยาย: cony, sally, Staring, hi, wave, Hello]"),
+        ("assistant", "text", "สวัสดีค่ะ มีเรื่องแถวบ้านอยากเล่าไหมคะ"),
+        ("user", "text", "ขยะล้นถังหน้าตลาด"),
+        ("user", "text", "[ระบบ: ผู้แจ้งส่งสติกเกอร์]"),
+        SESSION_EXPIRED,
+    ]
+
+    [report] = await reports_of(db, session_id)
+    assert report["desc"] == "ขยะล้นถังหน้าตลาด"
+    assert await status_of(db, session_id) == "analysed"

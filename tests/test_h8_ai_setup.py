@@ -156,3 +156,15 @@ async def test_live_structured_matches_analysis():
 
     analysis = Analysis.model_validate_json(reply.text)
     assert len(analysis.reports) >= 1
+
+
+# --- H9 รับตำแหน่งและสติกเกอร์ — S4 S13 · spec ใน #219 · แบบ docs/designs/09-modules/h9-location-sticker.puml ---
+
+
+def test_default_prompts_explain_system_notes():
+    """H9-16. prompt ตัวคุยและตัววิเคราะห์อธิบายป้าย [ระบบ: ...] · prompt ตัวคุยพูดถึงสติกเกอร์"""
+    from app.core import default_config
+
+    assert "[ระบบ:" in default_config.CHAT_PROMPT
+    assert "[ระบบ:" in default_config.ANALYSER_PROMPT
+    assert "สติกเกอร์" in default_config.CHAT_PROMPT

@@ -8,90 +8,87 @@
 
 ## ต้องมีอะไรบ้าง
 
-| ของ | ใช้ทำอะไร | จำเป็นตอนเปิดแอปไหม |
-|---|---|---|
-| Python 3.12+ | | ใช่ |
-| **Redis** | บทสนทนาที่คุยค้าง ใบที่ยังกรอกไม่เสร็จ คิวกันตาชนกัน | **ใช่** — `main.py` ping ตอนเปิด |
-| **Postgres + PostGIS** | รายงานที่ปิดใบแล้ว (ของถาวร) | **ใช่** — เปิด pool ตอนเปิด |
-| endpoint ของ AI | คุยกับชาวบ้าน | เฉพาะตอนคุยจริง |
-| LINE OA | ช่องทางแชท | เฉพาะตอนต่อ webhook |
+| ของ | ใช้ทำอะไร |
+|---|---|
+| Python 3.12 ขึ้นไป + [uv](https://docs.astral.sh/uv/) | รันแอป ลง dependency จาก `uv.lock` |
+| PostgreSQL | ของถาวร: ผู้แจ้ง ใบ ข้อความ รายงาน |
+| Redis | ของชั่วคราว: ข้อความที่ยังไม่ตอบ state ของใบ คิวงาน |
+| key ของ Gemini | AI ที่คุยกับผู้แจ้งและทำรายงาน |
+| LINE OA ช่องทดสอบ | ช่องทางแชท — ห้ามใช้ช่องจริงตอนพัฒนา |
 
-ทั้ง Redis และ Postgres **ไม่มีตัวไหนเป็น optional** — lifespan ต่อทั้งคู่ตอนเปิดแอป
-ขาดตัวใดตัวหนึ่งแอปจะไม่ขึ้น
+แอปต่อ PostgreSQL ตอนเปิด ต่อไม่ได้แอปไม่ขึ้น
 
 ## ตั้งเครื่องใหม่
 
 ```bash
-pip install -r requirements.txt
+uv sync
 
-cp .env.example .env        # แล้วเติมค่าจริง (ดูคำอธิบายในไฟล์)
+cp .env.example .env        # แล้วเติมค่าจริง (คำอธิบายอยู่ในไฟล์)
 
-psql "$DATABASE_URL" -f schema.sql      # ครั้งเดียว
+createdb ucr-chat-v2-alpha
+psql ucr-chat-v2-alpha -f schema.sql      # ครั้งเดียว — ฐานเดียวกับ DATABASE_URL ใน .env
 ```
 
-`schema.sql` **ไม่มี `IF NOT EXISTS`** ตั้งใจให้รันซ้ำแล้วพังให้เห็น
-ดีกว่าเงียบแล้วปล่อยตารางเก่าที่หน้าตาไม่ตรงกับไฟล์นี้อยู่ต่อไป
+`schema.sql` ไม่มี `IF NOT EXISTS` รันซ้ำบนฐานที่มีตารางแล้วจะ error
+
+ไม่ใช้ uv: `pip install -r requirements.txt` ได้ dependency ชุดเดียวกัน
+(ไฟล์นี้สร้างจาก `uv.lock` — แก้ dependency ที่ `pyproject.toml` แล้วสร้างใหม่ด้วยคำสั่งที่หัวไฟล์)
 
 ## รัน
 
 ```bash
-uvicorn app.main:app --reload
+uv run uvicorn app.main:app --reload
 ```
 
-ขึ้นแล้วจะเห็น `app opened` เช็คได้ที่ `GET /api/health`
+เปิดครั้งแรกบนฐานเปล่า แอปใส่ model กับ prompt ตั้งต้นลง PostgreSQL ให้เอง
 
-ต่อ LINE: `ngrok http 8000` แล้วเอา URL ไปตั้งเป็น webhook `https://<ngrok>/callback`
+เช็คว่าขึ้นครบ:
+
+```bash
+curl -i http://localhost:8000/health
+```
+
+อยู่ครบตอบ 200 ขาดตัวใดตัวหนึ่งตอบ 503 และบอกตัวที่ขาด
+
+```json
+{"database": true, "redis": true, "worker": true, "sweeper": true}
+```
+
+ต่อ LINE: `ngrok http 8000` แล้วตั้ง webhook ของช่องทดสอบเป็น `https://<ngrok>/webhook/line`
 
 ## ทางเข้าที่มี
 
-**ทุกทางข้างล่างนี้ล็อกอยู่ ยกเว้นสองอันที่เขียนกำกับไว้** (issue #139)
-ยื่นกุญแจได้สองแบบ ด่านเดียวกันรับทั้งคู่ — ดู `app/services/auth.py`
-
-| ยื่นอะไรมา | ใคร | ตั้งค่าที่ |
+| ทาง | ทำอะไร | ใครเรียกได้ |
 |---|---|---|
-| `Authorization: Bearer <jwt>` | ทีมแดชบอร์ด (เขาเป็นคนออก token เราแค่ตรวจ) | `SECRET_KEY` |
-| `Authorization: Basic <…>` | คนในทีมเรา เบราว์เซอร์เด้งช่องกรอกให้เอง | `DASHBOARD_USER` / `DASHBOARD_PASSWORD` |
+| `POST /webhook/line` | รับ event จาก LINE | ตรวจด้วยลายเซ็นของ LINE |
+| `GET /health` | PostgreSQL · Redis · worker · sweeper ยังอยู่ไหม | ทุกคน |
+| `GET /api/dashboard/reports` | รายงาน ใหม่ไปเก่า กรองด้วย `date` · `tag` · `limit` | JWT |
+| `GET /api/dashboard/attachments/{attachment_id}` | ไฟล์รูปของรายงาน | JWT |
+| `GET /api/dashboard/transcripts/{session_id}` | บทสนทนาทั้งใบ | JWT |
 
-ไม่ตั้งสักตัว = ทุกทางตอบ **503** (บอทยังเดินต่อ) · ยื่นผิดหรือไม่ยื่น = **401**
+3 เส้นใต้ `/api/dashboard` ต้องส่ง `Authorization: Bearer <jwt>` ที่เซ็นด้วย `SECRET_KEY`
+ตัวเดียวกับใน `.env` — backend ของทีมออกแบบเป็นคนออก token เราแค่ตรวจ
+ไม่ตั้ง `SECRET_KEY` = 3 เส้นนี้ตอบ 503 · token ผิดหรือไม่ส่ง = 401
 
-| ทาง | ทำอะไร |
-|---|---|
-| `POST /callback` | webhook ของ LINE — ตอบ 200 ทันที แล้วไปคุยต่อเบื้องหลัง **(ไม่ล็อก ตรวจด้วยลายเซ็นของ LINE)** |
-| `GET /dashboard` | แผนที่ให้ทีมออกแบบเปิดดู (อ่านอย่างเดียว) |
-| `GET /api/dashboard/reports` | ข้อมูลที่หน้าแผนที่ไปดึงเอง |
-| `GET /api/dashboard/image/{id}` | รูปของใบนั้น |
-| `GET /api/health` | Redis ยังอยู่ไหม **(ไม่ล็อก รับ HEAD ด้วย ตัวมอนิเตอร์ต้องเรียกได้เสมอ)** |
-| `GET /dashboard/broadcast` | หน้าทักชาวบ้านก่อน — เลือกคน เลือกเรื่อง อ่านข้อความ แล้วกดส่ง |
-| `GET /api/broadcast/state` | สวิตช์เปิดยัง + เรื่องที่ทักได้ + ชุมชน |
-| `GET /api/broadcast/audience` | คนที่ทักได้ พร้อมชุมชนและวันที่ทักล่าสุด |
-| `GET /api/broadcast/draft?topic=` | ให้ AI ร่างข้อความเปิด **ยังไม่ส่ง** |
-| `GET /api/broadcast/log` | ทักใครไปบ้าง ตอบไหม ได้เรื่องกลับมาไหม |
-| `POST /api/broadcast/send?to=&topic=` | ทักคนเดียว `to` = LINE user id |
-| `POST /api/broadcast/run?community=&topic=` | ทักทั้งชุมชน |
+## test
 
-`topic` = `flood` / `heat` / `both` — **เป็นแค่หัวเรื่อง ไม่ใช่คำถาม**
-ตัวข้อความ AI แต่งใหม่ทุกครั้ง และไม่มีปุ่มให้กด เขาตอบเป็นภาษาคน
-ไม่ใส่ `text` มาก็แต่งสดตอนส่ง ใส่มาก็ใช้ตามนั้น (หน้าเว็บให้อ่านและแก้ก่อนกด)
+```bash
+createdb ucr_nongmuang_test     # ครั้งเดียว
+uv run pytest
+```
 
-สองทางที่ส่งจริง **ต้องตั้ง `BROADCAST_ENABLED=true`** ก่อนถึงจะส่งได้
-ใส่ `dry=true` ลองเปล่า ๆ ได้เสมอ — บอกว่ารอบนี้จะไปถึงใคร โดยไม่ส่งและไม่จดอะไรลง
+test ใช้ฐาน `ucr_nongmuang_test` กับ Redis db 15 แยกจากของที่แอปใช้
+**test ล้างฐานและ Redis db นั้นทุกรอบ** — อย่าชี้ `TEST_DATABASE_URL` หรือ `TEST_REDIS_URL` ไปที่ของจริง
 
-ของสำหรับ dev (ไม่ต้องผ่าน LINE) — **ต้องตั้ง `DEV_ROUTES_ENABLED=true` ก่อน
-ไม่งั้นทั้งตารางนี้ไม่มีตัวตน (404)** และถึงเปิดแล้วก็ยังต้องยื่นกุญแจเหมือนกัน
-`/api/docs` กับ `/api/openapi.json` ขึ้นพร้อมสวิตช์ตัวนี้ (ของที่ FastAPI แถมมา
-ที่ `/docs` ถูกปิดทิ้ง เพราะล็อกมันไม่ได้):
-
-| ทาง | ทำอะไร |
-|---|---|
-| `GET /api/playground?message=` | ยิงเข้าโมเดลตรง ๆ — เช็คว่า key กับ endpoint ใช้ได้ |
-| `GET /api/survey?message=&session_id=` | คุยกับน้องเมืองโดยไม่ต้องมี LINE ใส่ `latitude`/`longitude` แทนปุ่มแชร์ตำแหน่งได้ |
-| `GET /api/survey/draft?session_id=` | ตอนนี้ในใบมีอะไรแล้ว ยังขาดอะไร |
-| `DELETE /api/survey/draft?session_id=` | เริ่มคุยใหม่ |
-| `GET /api/reports` | ทุกใบที่ลงที่เก็บถาวรแล้ว |
+test ที่ยิง Gemini จริงถูกข้าม เปิดด้วย `LIVE_AI=1 uv run pytest`
 
 ## ของที่ไม่ขึ้น git
 
-- `storage/` — รูปที่ชาวบ้านส่งมา + บทสนทนาต้นฉบับ (วันย้ายขึ้น S3 แก้แค่
-  `clients/media.py` กับ `clients/transcript.py`)
+- `uploads/` — รูปที่ผู้แจ้งส่งมา
 - `.env` — ค่าจริง
 - `local/` — สมุดจดส่วนตัว
+
+## เอกสาร
+
+- `docs/requirements/` — ความต้องการ ข้อจำกัด user story
+- `docs/designs/` — แบบที่ใช้ตอนสร้างแต่ละส่วน

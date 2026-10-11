@@ -15,11 +15,16 @@ async def lifespan(app: FastAPI):
     await database.connect()
     await redis.connect()
     await prompt.ensure_default_config()
-    tasks = [asyncio.create_task(worker.run()), asyncio.create_task(sweeper.run())] if WORKER_ENABLED else []
+    # เก็บ task ไว้ให้เส้น health ดูว่า worker กับ sweeper ยังวนอยู่ไหม
+    app.state.background = (
+        {"worker": asyncio.create_task(worker.run()), "sweeper": asyncio.create_task(sweeper.run())}
+        if WORKER_ENABLED
+        else {}
+    )
     try:
         yield
     finally:
-        for task in tasks:
+        for task in app.state.background.values():
             task.cancel()
         await redis.close()
         await database.close()

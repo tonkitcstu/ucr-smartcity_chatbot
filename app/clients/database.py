@@ -27,6 +27,15 @@ async def close() -> None:
     await pool.close()
 
 
+async def ping() -> bool:
+    """PSQL ตอบ → True · ต่อไม่ได้ / error → False"""
+    try:
+        await pool.fetchval("SELECT 1")
+        return True
+    except Exception:
+        return False
+
+
 async def select_user_by_line_id(line_user_id: str) -> User | None:
     row = await pool.fetchrow(
         "SELECT user_id, line_user_id, pdpa_accepted_at FROM users WHERE line_user_id = $1",

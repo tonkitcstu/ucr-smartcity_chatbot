@@ -1,0 +1,117 @@
+@startuml health
+' health เส้นเช็คว่า PSQL · Redis · worker · sweeper ยังอยู่
+'   T2 (รู้ทันทีเมื่อระบบไม่ตอบหรือขัดข้อง ไม่ต้องรอผู้ใช้แจ้ง) · TC8 (ตัวจริงรันบน EC2 ด้วย Docker)
+' ฟังก์ชันเท่าที่เส้นนี้เรียก · กล่อง = ไฟล์ · ลูกศร = ใครเรียกใคร
+' design · test · code #206 · คนเรียกเส้นนี้เป็นระยะคือ Docker (#208)
+' worker กับ sweeper เป็น asyncio task ในโปรแกรมเดียวกับเส้นนี้ — ดูจาก task ที่ lifespan สร้าง ไม่ต้องออกไปถามนอกแอป
+'   เอกสาร Python (asyncio Task): task done เมื่อ coroutine คืนค่า · โยน error · หรือถูกยกเลิก
+' ลองกับ Redis / PSQL ชุดแยกแล้ว (2026-10-10):
+'   ปิด Redis → worker.run() จบด้วย ConnectionError · เปิด Redis กลับ worker ไม่กลับมา
+'   ปิด PSQL → sweeper.run() จบด้วย OSError · เปิด PSQL กลับ sweeper ไม่กลับมา
+'   PSQL เปิดอยู่แต่ไม่ตอบ → เส้นนี้ไม่ตอบตาม · HEALTHCHECK ของ Docker นับการเช็คที่เกิน timeout ว่าไม่ผ่าน
+' เส้นนี้ไม่เห็น: task ที่ค้างแต่ไม่จบ · งานต่อใบ (worker.handle) ที่พังกลางทาง · AI ต่อไม่ได้
+' จดไว้ ทำทีหลัง (Idea 2026-10-11):
+'   worker / sweeper ตาย → print error ลง log
+'   worker / sweeper ตาย → แอปปิดตัว ให้ Docker เปิดใหม่ (restart policy ของ Docker ทำงานเมื่อ container หยุด)
+skinparam defaultFontName "Thonburi"
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+hide circle
+hide empty members
+
+title health — เส้นเช็คว่า PSQL · Redis · worker · sweeper ยังอยู่ [T2 · TC8]
+
+class "main.py" as MAIN {
+  lifespan(app)
+  include_router(health.router)
+}
+
+package "api/" #F7F7F7 {
+  class "health.py" as API {
+    GET /health() -> HealthStatus
+  }
+}
+
+package "controllers/" #F7F7F7 {
+  class "health.py" as CTRL {
+    check(background: dict[str, asyncio.Task]) -> HealthStatus
+    is_running(task: asyncio.Task | None) -> bool
+  }
+}
+
+package "clients/" #FFF4E8 {
+  class "database.py" as CL_DB {
+    ping() -> bool
+  }
+  class "redis.py" as CL_RD {
+    ping() -> bool
+  }
+}
+
+package "models/" #F0FFF0 {
+  class "health.py" as M_HEALTH {
+    HealthStatus  (4 ตัวที่บอทต้องมีครบถึงจะตอบผู้แจ้งได้ · true = อยู่)
+    --
+    database: bool
+    redis: bool
+    worker: bool
+    sweeper: bool
+  }
+}
+
+MAIN --> API
+API --> CTRL
+CTRL --> CL_DB
+CTRL --> CL_RD
+CTRL ..> M_HEALTH : สร้าง HealthStatus
+
+note top of MAIN
+  <b>lifespan</b>
+  ต่อ database + redis → prompt.ensure_default_config()
+  WORKER_ENABLED เปิด
+    → เปิด worker.run() กับ sweeper.run() เป็น task
+    → เก็บ task ไว้ที่ app.state.background
+       {"worker": task, "sweeper": task}
+  WORKER_ENABLED ปิด → app.state.background = {}
+  ปิดแอป → ยกเลิก task ทุกตัวใน app.state.background
+end note
+
+note right of API
+  <b>/health</b> ไม่ต้องมี JWT
+  status = health.check(app.state.background)
+  true ครบ 4 ช่อง → 200
+  มีช่องที่ false → 503
+  JSON หน้าตาเดียวกันทั้งสองกรณี
+    {"database": true, "redis": true,
+     "worker": false, "sweeper": true}
+  ไม่ตอบข้อมูลของผู้แจ้งหรือค่าใน .env
+end note
+
+note left of CTRL
+  <b>check</b>
+  database = database.ping()
+  redis = redis.ping()
+  worker = is_running(background.get("worker"))
+  sweeper = is_running(background.get("sweeper"))
+
+  <b>is_running</b>
+  ไม่มี task (WORKER_ENABLED ปิด) → False
+  task จบแล้ว → False
+    run() เป็น while True
+    จบได้ทางเดียวคือ error พาหลุดจาก loop
+  task ยังวนอยู่ → True
+end note
+
+note bottom of CL_DB
+  <b>ping</b> SELECT 1
+  PSQL ตอบ → True
+  ต่อไม่ได้ / error → False
+end note
+
+note bottom of CL_RD
+  <b>ping</b> PING
+  Redis ตอบ → True
+  ต่อไม่ได้ / error → False
+end note
+@enduml

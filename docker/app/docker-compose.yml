@@ -1,0 +1,35 @@
+# แอป: FastAPI + worker + sweeper ใน process เดียว
+# ปกติขึ้นพร้อมทั้งระบบจาก docker-compose.yml ที่ราก repo
+# เปิดตัวเดียว (สั่งจากราก repo): docker compose --env-file .env -f docker/app/docker-compose.yml up -d --build
+# เปิดตัวเดียวแบบนี้ไม่รอ postgres กับ redis — ต้องเปิดสองตัวนั้นไว้ก่อน (การรอกันอยู่ใน docker-compose.yml ที่ราก)
+
+# ชื่อชุดเดียวกันทั้ง 3 ไฟล์ — เปิดแยกไฟล์ก็ยังได้เครือข่ายและ volume ชุดเดิม
+name: ucr-smartcity_chatbot
+
+services:
+  app:
+    build:
+      # โค้ดอยู่ที่ราก repo — .dockerignore ที่รากเป็นตัวกันของที่ห้ามเข้า image
+      context: ../..
+      dockerfile: docker/app/Dockerfile
+    env_file: ../../.env
+    environment:
+      # ในเครือข่ายของ compose เรียกกันด้วยชื่อ service — ทับค่า localhost ใน .env
+      DATABASE_URL: postgresql://ucr:${POSTGRES_PASSWORD:?ตั้ง POSTGRES_PASSWORD ใน .env}@postgres:5432/ucr-chat-v2-alpha
+      REDIS_URL: redis://redis:6379/0
+      UPLOADS_DIR: /app/uploads
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    volumes:
+      - uploads:/app/uploads
+    healthcheck:
+      # /health ตอบ 503 เมื่อ PostgreSQL · Redis · worker · sweeper ขาดตัวใดตัวหนึ่ง → urlopen โยน error → unhealthy
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  uploads:

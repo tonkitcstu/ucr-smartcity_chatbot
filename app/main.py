@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api import dashboard, line
+from app.api import dashboard, health, line
 from app.clients import database, redis
 from app.core.config import WORKER_ENABLED
 from app.services import prompt
@@ -34,3 +34,4 @@ app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
 
 app.include_router(line.router)
 app.include_router(dashboard.router)
+app.include_router(health.router)

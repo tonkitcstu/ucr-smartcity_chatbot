@@ -11,6 +11,14 @@ from app.models.message import Message, TranscriptMessage
 # ใบปิดเพราะเงียบจนหมดเวลา — บรรทัดสุดท้ายที่ตัววิเคราะห์เห็น
 SESSION_EXPIRED = "//leave chat because session expired"
 
+# ป้ายแทนสิ่งที่ผู้แจ้งทำในไลน์ — prompt ของตัวคุยและตัววิเคราะห์บอกไว้ว่าบรรทัด [ระบบ: ...] ไม่ใช่คำที่ผู้แจ้งพิมพ์
+PIN_NOTE = "[ระบบ: ผู้แจ้งปักหมุดตำแหน่งแล้ว]"
+
+
+def sticker_note(keywords: str | None) -> str:
+    """keywords = คำที่ LINE ใช้บรรยายสติกเกอร์ · LINE ไม่ส่งมา → ป้ายเปล่า"""
+    return f"[ระบบ: ผู้แจ้งส่งสติกเกอร์ คำบรรยาย: {keywords}]" if keywords else "[ระบบ: ผู้แจ้งส่งสติกเกอร์]"
+
 
 async def ensure_default_config() -> None:
     """PSQL เป็นตัวจริง · หา ai_configs ไม่เจอ (ฐานใหม่) → ใส่ค่าจาก default_config"""
@@ -31,14 +39,20 @@ async def latest_config() -> AiConfig:
 
 
 def buffer_to_context(buffer: list[Message], attachments: list[Attachment]) -> list[ContextMessage]:
-    """buffer → ContextMessage role user · text → ข้อความ · image → path ไฟล์ของ attachment"""
+    """buffer → ContextMessage role user · text → ข้อความ · image → path ไฟล์ของ attachment
+    ตำแหน่ง → PIN_NOTE (ตัวคุยไม่เห็นพิกัด) · สติกเกอร์ → sticker_note"""
     file_paths = {item.message_id: item.file_path for item in attachments}
-    return [
-        ContextMessage(role="user", type="image", content=file_paths[message.message_id])
-        if message.type == "image"
-        else ContextMessage(role="user", type="text", content=message.content)
-        for message in buffer
-    ]
+    context = []
+    for message in buffer:
+        if message.type == "image":
+            context.append(ContextMessage(role="user", type="image", content=file_paths[message.message_id]))
+        elif message.type == "location":
+            context.append(ContextMessage(role="user", type="text", content=PIN_NOTE))
+        elif message.type == "sticker":
+            context.append(ContextMessage(role="user", type="text", content=sticker_note(message.content)))
+        else:
+            context.append(ContextMessage(role="user", type="text", content=message.content))
+    return context
 
 
 async def build_chat_context(
@@ -52,6 +66,7 @@ async def build_chat_context(
 async def build_analyse_context(config: AiConfig, transcript: list[TranscriptMessage]) -> list[ContextMessage]:
     """[system: prompt ของตัววิเคราะห์] + บทสนทนาทั้งใบ + บรรทัดปิดท้ายฝั่ง user
     รูปมีป้าย [รูป n] นำหน้า · ตำแหน่งเป็นป้าย [ตำแหน่ง n] · n นับจาก 1 แยกชนิด ตามลำดับในบทสนทนา
+    สติกเกอร์เป็น sticker_note บรรทัดเดียวกับที่ตัวคุยเห็น
     ปิดท้ายด้วย SESSION_EXPIRED — Gemini ไม่รับคำขอที่จบด้วย assistant (#202)"""
     prompt = await database.select_prompt(config.analyzer_prompt_id)
     context = [ContextMessage(role="system", type="text", content=prompt.prompt)]
@@ -64,6 +79,8 @@ async def build_analyse_context(config: AiConfig, transcript: list[TranscriptMes
         elif message.type == "location":
             locations += 1
             context.append(ContextMessage(role=message.role, type="text", content=f"[ตำแหน่ง {locations}]"))
+        elif message.type == "sticker":
+            context.append(ContextMessage(role=message.role, type="text", content=sticker_note(message.content)))
         else:
             context.append(ContextMessage(role=message.role, type="text", content=message.content))
     context.append(ContextMessage(role="user", type="text", content=SESSION_EXPIRED))

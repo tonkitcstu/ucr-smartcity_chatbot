@@ -3,8 +3,10 @@
 from linebot.v3.webhooks import (
     FollowEvent,
     ImageMessageContent,
+    LocationMessageContent,
     MessageEvent,
     PostbackEvent,
+    StickerMessageContent,
     TextMessageContent,
 )
 
@@ -55,19 +57,33 @@ async def on_message(event: MessageEvent) -> None:
 
 
 def to_incoming(event: MessageEvent) -> IncomingMessage | None:
-    """ข้อความ text → type text · รูป → type image ไม่มี content (worker ดาวน์โหลดด้วย line_message_id) · ชนิดอื่น → None"""
+    """ข้อความ text → type text · รูป → type image ไม่มี content (worker ดาวน์โหลดด้วย line_message_id)
+    ตำแหน่ง → type location มี lat/lng · สติกเกอร์ → type sticker content = keywords ที่ LINE ใช้บรรยาย (ไม่ส่งมา = ไม่มี)
+    ชนิดอื่น → None"""
     # availible message_type
     message_types = {
         TextMessageContent: "text",
         ImageMessageContent: "image",
+        LocationMessageContent: "location",
+        StickerMessageContent: "sticker",
     }
-    kind = message_types.get(type(event.message))
+    message = event.message
+    kind = message_types.get(type(message))
     if kind is None:
         return None
+    content = lat = lng = None
+    if kind == "text":
+        content = message.text
+    elif kind == "location":
+        lat, lng = message.latitude, message.longitude
+    elif kind == "sticker" and message.keywords:
+        content = ", ".join(message.keywords)
     return IncomingMessage(
         line_event_id=event.webhook_event_id,
-        line_message_id=event.message.id,
+        line_message_id=message.id,
         reply_token=event.reply_token,
         type=kind,
-        content=getattr(event.message, "text", None),
+        content=content,
+        lat=lat,
+        lng=lng,
     )

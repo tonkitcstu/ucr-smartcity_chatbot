@@ -74,8 +74,8 @@ async def insert_message(session_id: UUID, incoming: IncomingMessage) -> Message
     """บันทึกเป็น user (ผู้แจ้ง) · ยังไม่ตอบ"""
     message_id = await pool.fetchval(
         """
-        INSERT INTO messages (session_id, line_event_id, line_message_id, role, type, content)
-        VALUES ($1, $2, $3, 'user', $4, $5)
+        INSERT INTO messages (session_id, line_event_id, line_message_id, role, type, content, lat, lng)
+        VALUES ($1, $2, $3, 'user', $4, $5, $6, $7)
         RETURNING message_id
         """,
         session_id,
@@ -83,6 +83,8 @@ async def insert_message(session_id: UUID, incoming: IncomingMessage) -> Message
         incoming.line_message_id,
         incoming.type,
         incoming.content,
+        incoming.lat,
+        incoming.lng,
     )
     return Message(**incoming.model_dump(), message_id=message_id, session_id=session_id)
 

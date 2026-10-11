@@ -1,5 +1,8 @@
 -- ตารางตาม docs/designs/07-dbdiagram/db.puml (happy path S1–S8)
 
+-- PostGIS — ถามเชิงพื้นที่จากพิกัดของรายงาน · เครื่องที่รันต้องลง PostGIS ไว้ก่อน
+CREATE EXTENSION postgis;
+
 CREATE TABLE users (
     user_id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     line_user_id     text NOT NULL UNIQUE,

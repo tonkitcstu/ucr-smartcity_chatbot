@@ -21,6 +21,15 @@ async def close() -> None:
     await client.aclose()
 
 
+async def ping() -> bool:
+    """Redis ตอบ → True · ต่อไม่ได้ / error → False"""
+    try:
+        await client.ping()
+        return True
+    except Exception:
+        return False
+
+
 def _key(session_id: UUID, name: str) -> str:
     return f"session:{session_id}:{name}"
 

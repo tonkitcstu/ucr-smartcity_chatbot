@@ -1,0 +1,78 @@
+@startuml 5-pdpa
+' 5. PDPA - add friend, message before accepting, accept, message after accepting
+' Traced from code at dev-rewrite e09d47b (2026-10-11) . box = file . arrow = function calls function
+' italic = what that function does to PSQL / LINE
+skinparam defaultFontSize 14
+skinparam shadowing false
+hide footbox
+autonumber
+
+title 5. PDPA
+
+actor "LINE\n(reporter)" as LINE
+participant "api/\nline.py" as API
+participant "controllers/\nline.py" as CTRL
+participant "clients/\nline.py\n(LINE API)" as CL
+participant "services/\npdpa.py" as PDPA
+participant "services/\nuser.py" as USER
+participant "clients/\ndatabase.py\n(PSQL)" as CDB
+
+== entry point of every event ==
+LINE -> API : POST /webhook/line\nbody + X-Line-Signature
+API -> API : webhook(request, x_line_signature)
+API -> CTRL : line.handle_webhook(body, signature)
+CTRL -> CL : line.parse_events(body, signature)\n<i>WebhookParser.parse - checks the signature, then parses the events</i>
+alt signature does not match
+  CL --> CTRL : raise InvalidSignatureError
+  CTRL --> API : raise InvalidSignatureError
+  API --> LINE : 400 {"detail": "invalid signature"}
+else signature matches
+  CL --> CTRL : list[event]
+  note right of CTRL
+    dispatches each event by type
+    FollowEvent -> on_follow
+    PostbackEvent -> on_postback
+    MessageEvent -> on_message
+    any other type -> skipped
+    after all events -> api returns "OK" (200)
+  end note
+end
+
+== add friend (FollowEvent) ==
+CTRL -> CTRL : on_follow(event)
+CTRL -> PDPA : pdpa.card()
+PDPA --> CTRL : FlexMessage\n<i>from pdpa_card.json - fixed wording (TC7 exception 3)</i>
+CTRL -> CL : line.reply(event.reply_token, [card])\n<i>reply_message</i>
+note right of CTRL : nothing about the reporter is stored yet
+
+== message before accepting (MessageEvent) ==
+CTRL -> CTRL : on_message(event)
+CTRL -> USER : user.find_by_line_id(event.source.user_id)
+USER -> CDB : select_user_by_line_id(line_user_id)\n<i>SELECT users WHERE line_user_id</i>
+CDB --> USER : None
+USER --> CTRL : None
+CTRL -> PDPA : pdpa.card()
+PDPA --> CTRL : FlexMessage
+CTRL -> CL : line.reply(event.reply_token, [card])
+note right of CTRL : returns - this message is not saved and not sent to the AI (LC1)
+
+== accept (PostbackEvent) ==
+CTRL -> CTRL : on_postback(event)
+alt event.postback.data == pdpa.ACCEPT ("pdpa_accept")
+  CTRL -> PDPA : pdpa.accept(event.source.user_id)
+  PDPA -> CDB : insert_user(line_user_id)\n<i>INSERT users (line_user_id, pdpa_accepted_at = now())</i>\n<i>already exists -> returns the same row, same time</i>
+  CDB --> PDPA : User
+  PDPA --> CTRL : User
+  note right of CTRL : no reply - the button's displayText already shows the tap
+else any other data
+  note right of CTRL : does nothing
+end
+
+== message after accepting (MessageEvent) ==
+CTRL -> CTRL : on_message(event)
+CTRL -> USER : user.find_by_line_id(event.source.user_id)
+USER -> CDB : select_user_by_line_id(line_user_id)
+CDB --> USER : User
+USER --> CTRL : User
+note right of CTRL : a User exists = accepted -> the message is saved, continues in 4-1
+@enduml

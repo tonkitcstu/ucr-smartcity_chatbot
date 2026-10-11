@@ -1,0 +1,105 @@
+@startuml 3-2-dashboard-attachments
+' 3-2. GET /api/dashboard/attachments/{attachment_id} - the design team pulls one image file
+' Traced from code at dev-rewrite e09d47b (2026-10-11) . box = file . arrow = function calls function
+' italic = what that function does to PSQL
+' JSON in the notes was captured from the real routes on the test database (2026-10-11)
+skinparam defaultFontSize 14
+skinparam shadowing false
+hide footbox
+autonumber
+
+title 3-2. GET /api/dashboard/attachments/{attachment_id}
+
+actor "Design team\nsystem" as D
+participant "api/\ndashboard.py" as API
+participant "services/\nauth.py" as AUTH
+participant "controllers/\ndashboard.py" as CTRL
+participant "services/\nattachment.py" as ATT
+participant "clients/\ndatabase.py\n(PSQL)" as CDB
+
+== gate: require_jwt ==
+D -> API : GET /api/dashboard/attachments/{attachment_id}\nAuthorization: Bearer JWT
+API -> API : require_jwt(authorization)
+alt config.SECRET_KEY is not set
+  API --> D : 503
+  note over D, API
+    <code>
+    {"detail": "SECRET_KEY is not set"}
+    </code>
+  end note
+else no Authorization / not Bearer
+  API --> D : 401
+  note over D, API
+    <code>
+    {"detail": "Could not validate credentials"}
+    </code>
+  end note
+else Bearer
+  API -> AUTH : auth.read_jwt(token)
+  AUTH -> AUTH : jwt.decode(token, SECRET_KEY, [ALGORITHM])
+  alt not a JWT / bad signature / expired / no sub
+    AUTH --> API : raise Denied
+    API --> D : 401 - same JSON as above
+  else valid
+    AUTH --> API : {"username", "role"}
+  end
+end
+
+== attachment ==
+note over API
+  after the gate lets the request through, FastAPI checks
+  the path against the parameter of attachment()
+    attachment_id: UUID
+end note
+alt attachment_id is not a uuid
+  API --> D : 422 - attachment() is not called
+  note over D, CTRL
+    <code>
+    {
+      "detail": [
+        {
+          "type": "uuid_parsing",
+          "loc": ["path", "attachment_id"],
+          "msg": "Input should be a valid UUID, invalid length: expected length 32 for simple format, found 3",
+          "input": "abc",
+          "ctx": {"error": "invalid length: expected length 32 for simple format, found 3"}
+        }
+      ]
+    }
+    </code>
+  end note
+else valid uuid
+  API -> API : attachment(attachment_id)
+  API -> CTRL : dashboard.find_attachment(attachment_id)
+  CTRL -> ATT : attachment.find_file(attachment_id)
+  ATT -> CDB : select_attachment_path(attachment_id)\n<i>SELECT file_path FROM attachments WHERE attachment_id</i>
+  CDB --> ATT : str | None
+  ATT -> ATT : Path(file_path).is_file()\n<i>is the file on this machine's disk</i>
+  alt no row / file is not on disk
+    ATT --> CTRL : None
+    CTRL --> API : None
+    API --> D : 404
+    note over D, CTRL
+      <code>
+      {"detail": "Attachment not found"}
+      </code>
+    end note
+  else file exists
+    ATT --> CTRL : Path
+    CTRL --> API : Path
+    API --> D : 200 FileResponse(path, media_type="image/jpeg")
+    note over D, CTRL
+      not JSON - the body is the file, byte for byte as it is on disk
+      <code>
+      content-type: image/jpeg
+      accept-ranges: bytes
+      content-length: 48
+      last-modified: Sun, 11 Oct 2026 10:00:24 GMT
+      etag: "ef0bd6a0798cc7ea1c81b82bf765774e"
+      </code>
+      content-type is the fixed media_type in attachment(), it is not read from the file
+      content-length = size of the file . the other headers are added by FileResponse
+    end note
+  end
+end
+@enduml

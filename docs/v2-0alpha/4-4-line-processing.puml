@@ -1,0 +1,73 @@
+@startuml 4-4-line-processing
+' 4-4. A message (text / image) arrives while the session is PROCESSING - the worker is answering the previous round
+' Traced from code at dev-rewrite e09d47b (2026-10-11) . box = file . arrow = function calls function
+' italic = what that function does to PSQL / Redis
+' PROCESSING = session:{id}:state is PROCESSING (set by session.start_processing in run_chat)
+' The outcome depends on whether the message arrives before or after the worker calls session.read_buffer
+' Cases A and B were run against the real code on the test database (2026-10-11):
+'   case B: the second message stayed pending, and the AI did not see it in that round or the next one
+skinparam defaultFontSize 14
+skinparam shadowing false
+hide footbox
+autonumber
+
+title 4-4. Message arrives while the session is PROCESSING
+
+actor "LINE\n(reporter)" as LINE
+participant "controllers/\nline.py" as CTRL
+participant "services/\nsession.py" as SESS
+participant "workers/\nworker.py" as WORKER
+participant "clients/\ndatabase.py\n(PSQL)" as CDB
+participant "clients/\nredis.py\n(Redis)" as CRD
+
+note over WORKER : run_chat has passed session.start_processing\nstate = PROCESSING
+
+== the new message hits the webhook (same in both cases) ==
+LINE -> CTRL : POST /webhook/line -> ... -> on_message(event)
+ref over CTRL, CRD
+  same as 4-1 from user.find_by_line_id through session.buffer(message)
+  the message is saved to PSQL (pending), appended to the buffer, last_message_at = now
+end ref
+CTRL -> SESS : session.start_buffering(current)
+SESS -> CRD : set_buffering_if_idle(session_id)\n<i>SET session:{id}:state BUFFERING NX</i>
+CRD --> SESS : False
+SESS --> CTRL : False
+note right of CTRL
+  the key already exists (PROCESSING) -> set fails
+  job.enqueue_chat is not called
+end note
+CTRL --> LINE : 200 "OK"
+
+== case A - it arrives before the worker calls session.read_buffer ==
+note over WORKER : during user.line_id_for, line.show_loading
+WORKER -> SESS : session.read_buffer(session_id)
+SESS -> CRD : get_buffer(session_id)
+CRD --> SESS : list[Message] - includes the new message
+SESS --> WORKER : list[Message]
+ref over WORKER, CRD
+  same as 4-2 onward through session.finish
+  the new message goes with this round, line.reply uses its reply_token
+end ref
+
+== case B - it arrives after the worker has called session.read_buffer ==
+note over WORKER
+  during image download, the AI call, line.reply
+  the buffer the worker holds does not contain the new message
+end note
+WORKER -> SESS : session.finish(session_id, buffer, new_context, answer)
+SESS -> CDB : insert_bot_message(session_id, answer)
+SESS -> CDB : mark_answered([message_id of the messages the worker read])\n<i>the new message is not in the list -> stays pending</i>
+SESS -> CRD : append_history(session_id, [*new_context, bot answer])\n<i>does not contain the new message</i>
+SESS -> CRD : clear_buffer(session_id)\n<i>DEL session:{id}:buffer - removes the whole key, new message included</i>
+SESS -> CRD : clear_state(session_id)\n<i>DEL session:{id}:state -> IDLE</i>
+note over CTRL, CRD
+  the new message after the round ends
+  PSQL: the row exists, status pending
+  Redis: not in the buffer, not in the history, no chat job queued
+  no line.reply for this message
+  next chat round: the communicator does not see it (history comes from Redis)
+  the new message is text: the analyser sees it (reads the whole session from PSQL - 4-6)
+  the new message is an image: attachment.save never ran for it -> no file, no attachments row
+    when the session is analysed, build_analyse_context raises ValidationError (4-6)
+end note
+@enduml

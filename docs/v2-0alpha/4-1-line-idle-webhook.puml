@@ -1,0 +1,91 @@
+@startuml 4-1-line-idle-webhook
+' 4-1. A message (text / image) arrives while the session is IDLE - webhook side, up to queueing the chat job
+' Traced from code at dev-rewrite e09d47b (2026-10-11) . box = file . arrow = function calls function
+' italic = what that function does to PSQL / Redis
+' IDLE = no session:{id}:state key in Redis (new session, or the bot finished answering the previous round)
+' The reporter has already accepted PDPA - not accepted yet: see 5-pdpa
+skinparam defaultFontSize 14
+skinparam shadowing false
+hide footbox
+autonumber
+
+title 4-1. Message arrives while the session is IDLE - webhook side
+
+actor "LINE\n(reporter)" as LINE
+participant "api/\nline.py" as API
+participant "controllers/\nline.py" as CTRL
+participant "clients/\nline.py\n(LINE API)" as CL
+participant "services/\nuser.py" as USER
+participant "services/\nsession.py" as SESS
+participant "services/\njob.py" as JOB
+participant "clients/\ndatabase.py\n(PSQL)" as CDB
+participant "clients/\nredis.py\n(Redis)" as CRD
+
+LINE -> API : POST /webhook/line\nbody + X-Line-Signature
+API -> API : webhook(request, x_line_signature)
+API -> CTRL : line.handle_webhook(body, signature)
+CTRL -> CL : line.parse_events(body, signature)\n<i>WebhookParser.parse - checks the signature, then parses the events</i>
+CL --> CTRL : [MessageEvent]
+note right of CTRL
+  signature does not match, or no X-Line-Signature header
+    -> InvalidSignatureError -> 400 {"detail": "invalid signature"} (5-pdpa)
+  one body can hold several events - handle_webhook
+    runs them one after another, in the order of the list
+end note
+CTRL -> CTRL : on_message(event)
+
+CTRL -> USER : user.find_by_line_id(event.source.user_id)
+USER -> CDB : select_user_by_line_id(line_user_id)
+CDB --> USER : User
+USER --> CTRL : User
+
+CTRL -> CTRL : to_incoming(event)
+note right of CTRL
+  <b>text</b> (TextMessageContent)
+    type = "text", content = the text
+  <b>image</b> (ImageMessageContent)
+    type = "image", content = None
+    keeps line_message_id so the worker can download it
+  any other type (location, sticker, audio, ...) -> None
+    on_message returns - nothing saved, no reply
+  returns IncomingMessage(line_event_id, line_message_id,
+    reply_token, type, content)
+end note
+
+CTRL -> SESS : session.open_for(found)
+SESS -> CDB : open_session(user_id)\n<i>INSERT sessions - an open session already exists: returns that one</i>\n<i>either way last_message_at = now()</i>
+CDB --> SESS : Session
+SESS --> CTRL : Session
+
+CTRL -> SESS : session.save_message(current, incoming)
+SESS -> CDB : insert_message(session_id, incoming)\n<i>INSERT messages, role user, status pending</i>
+CDB --> SESS : Message
+SESS --> CTRL : Message
+note right of CTRL
+  messages.line_event_id is unique
+  the same webhookEventId a second time -> insert_message raises
+  UniqueViolationError -> 500, no second row, nothing added to Redis
+  (open_session has already set last_message_at = now())
+end note
+
+CTRL -> SESS : session.buffer(message)
+SESS -> CRD : append_buffer(message)\n<i>RPUSH session:{id}:buffer</i>
+SESS -> CRD : set_last_message_at(session_id, time.time())\n<i>SET session:{id}:last_message_at</i>
+
+CTRL -> SESS : session.start_buffering(current)
+SESS -> CRD : set_buffering_if_idle(session_id)\n<i>SET session:{id}:state BUFFERING NX</i>
+CRD --> SESS : True
+SESS --> CTRL : True
+note right of CTRL
+  no key (IDLE) -> set succeeds -> state = BUFFERING
+  True -> on_message queues the chat job
+  (key already there -> False, no job -> 4-3, 4-4, 4-5)
+end note
+
+CTRL -> JOB : job.enqueue_chat(current)
+JOB -> CRD : push_job(Job(kind="chat", session_id))\n<i>RPUSH jobs</i>
+
+CTRL --> API
+API --> LINE : 200 "OK"\n<i>content-type application/json</i>
+note right of API : the webhook does not reply - the worker does (4-2)
+@enduml

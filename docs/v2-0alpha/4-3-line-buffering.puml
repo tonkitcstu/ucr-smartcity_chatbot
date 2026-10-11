@@ -1,0 +1,52 @@
+@startuml 4-3-line-buffering
+' 4-3. A message (text / image) arrives while the session is BUFFERING - the earlier message is still waiting for silence
+' Traced from code at dev-rewrite e09d47b (2026-10-11) . box = file . arrow = function calls function
+' italic = what that function does to PSQL / Redis
+' BUFFERING = session:{id}:state is BUFFERING . one chat job for this session is already queued
+skinparam defaultFontSize 14
+skinparam shadowing false
+hide footbox
+autonumber
+
+title 4-3. Message arrives while the session is BUFFERING
+
+actor "LINE\n(reporter)" as LINE
+participant "controllers/\nline.py" as CTRL
+participant "services/\nsession.py" as SESS
+participant "workers/\nworker.py" as WORKER
+participant "clients/\nredis.py\n(Redis)" as CRD
+
+note over WORKER : this session's chat job was already taken\nrun_chat is inside wait_for_silence
+
+== the new message hits the webhook ==
+LINE -> CTRL : POST /webhook/line -> ... -> on_message(event)
+ref over CTRL, CRD
+  same as 4-1 from user.find_by_line_id through session.buffer(message)
+  the message is saved to PSQL (pending), appended to the buffer, last_message_at = now
+end ref
+CTRL -> SESS : session.start_buffering(current)
+SESS -> CRD : set_buffering_if_idle(session_id)\n<i>SET session:{id}:state BUFFERING NX</i>
+CRD --> SESS : False
+SESS --> CTRL : False
+note right of CTRL
+  the key already exists (BUFFERING) -> set fails
+  job.enqueue_chat is not called - no second chat job
+end note
+CTRL --> LINE : 200 "OK"
+
+== worker - the same chat job ==
+WORKER -> SESS : session.last_message_at(session_id)
+SESS -> CRD : get_last_message_at(session_id)
+CRD --> SESS : time of the new message
+SESS --> WORKER : float
+note right of WORKER
+  last_message_at moved -> left > 0
+  asyncio.sleep(left) again
+  SILENCE_SECONDS is counted from the newest message
+end note
+ref over WORKER, CRD
+  silence reached -> same as 4-2 from session.start_processing through session.finish
+  read_buffer returns every message (earlier + new) -> one AI call
+  one line.reply, using the reply_token of the new message (newest in the buffer)
+end ref
+@enduml

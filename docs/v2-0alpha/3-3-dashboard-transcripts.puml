@@ -1,0 +1,133 @@
+@startuml 3-3-dashboard-transcripts
+' 3-3. GET /api/dashboard/transcripts/{session_id} - the design team pulls one whole conversation
+' Traced from code at dev-rewrite e09d47b (2026-10-11) . box = file . arrow = function calls function
+' italic = what that function does to PSQL
+' JSON in the notes was captured from the real routes on the test database (2026-10-11)
+skinparam defaultFontSize 14
+skinparam shadowing false
+hide footbox
+autonumber
+
+title 3-3. GET /api/dashboard/transcripts/{session_id}
+
+actor "Design team\nsystem" as D
+participant "api/\ndashboard.py" as API
+participant "services/\nauth.py" as AUTH
+participant "controllers/\ndashboard.py" as CTRL
+participant "services/\nsession.py" as SESS
+participant "clients/\ndatabase.py\n(PSQL)" as CDB
+
+== gate: require_jwt ==
+D -> API : GET /api/dashboard/transcripts/{session_id}\nAuthorization: Bearer JWT
+API -> API : require_jwt(authorization)
+alt config.SECRET_KEY is not set
+  API --> D : 503
+  note over D, API
+    <code>
+    {"detail": "SECRET_KEY is not set"}
+    </code>
+  end note
+else no Authorization / not Bearer
+  API --> D : 401
+  note over D, API
+    <code>
+    {"detail": "Could not validate credentials"}
+    </code>
+  end note
+else Bearer
+  API -> AUTH : auth.read_jwt(token)
+  AUTH -> AUTH : jwt.decode(token, SECRET_KEY, [ALGORITHM])
+  alt not a JWT / bad signature / expired / no sub
+    AUTH --> API : raise Denied
+    API --> D : 401 - same JSON as above
+  else valid
+    AUTH --> API : {"username", "role"}
+  end
+end
+
+== transcript ==
+note over API
+  after the gate lets the request through, FastAPI checks
+  the path against the parameter of transcript()
+    session_id: UUID
+end note
+alt session_id is not a uuid
+  API --> D : 422 - transcript() is not called
+  note over D, CTRL
+    <code>
+    {
+      "detail": [
+        {
+          "type": "uuid_parsing",
+          "loc": ["path", "session_id"],
+          "msg": "Input should be a valid UUID, invalid length: expected length 32 for simple format, found 3",
+          "input": "abc",
+          "ctx": {"error": "invalid length: expected length 32 for simple format, found 3"}
+        }
+      ]
+    }
+    </code>
+  end note
+else valid uuid
+  API -> API : transcript(session_id)
+  API -> CTRL : dashboard.read_transcript(session_id)
+  CTRL -> SESS : session.read_transcript(session_id)
+  SESS -> CDB : select_transcript(session_id)\n<i>messages LEFT JOIN attachments WHERE session_id</i>\n<i>ordered by messages.created_at</i>\n<i>sessions.status and messages.status are not looked at</i>
+  CDB --> SESS : list[TranscriptMessage]
+  SESS --> CTRL : list[TranscriptMessage]
+  CTRL -> CTRL : each TranscriptMessage -> DashboardMessage\n<i>row with an attachment_id: attachment = link(attachment_id)</i>\n<i>otherwise attachment = None . file_path is not sent</i>
+  CTRL --> API : list[DashboardMessage]
+  alt empty list - no such session, or the session has no message
+    API --> D : 404
+    note over D, CTRL
+      <code>
+      {"detail": "Transcript not found"}
+      </code>
+    end note
+  else has messages
+    API --> D : 200
+    note over D, CDB
+      <code>
+      [
+        {
+          "message_id": "73a802f1-791c-4057-a120-bb16bccc1cc3",
+          "role": "user",
+          "type": "text",
+          "content": "The street floods every time it rains",
+          "lat": null,
+          "lng": null,
+          "attachment": null
+        },
+        {
+          "message_id": "bd5fe19b-4140-4915-82f9-299a1c302628",
+          "role": "user",
+          "type": "image",
+          "content": null,
+          "lat": null,
+          "lng": null,
+          "attachment": {
+            "attachment_id": "5511ded6-9efb-4361-8add-4663db482d65",
+            "url": "/api/dashboard/attachments/5511ded6-9efb-4361-8add-4663db482d65"
+          }
+        },
+        {
+          "message_id": "71099e3c-f6ec-4991-b4bf-abba454ee119",
+          "role": "assistant",
+          "type": "text",
+          "content": "How deep does the water get?",
+          "lat": null,
+          "lng": null,
+          "attachment": null
+        }
+      ]
+      </code>
+      role = "user" | "assistant"
+      type = "text" | "image" | "location"
+        (location messages are inserted by no function -> 6-database)
+      ordered oldest first . no time field in the JSON
+      image row: "attachment" is null until the worker has saved the file (4-2)
+      a session that is still open is returned too, with the messages it has so far
+    end note
+  end
+end
+@enduml

@@ -1,7 +1,7 @@
 """H7 ทีมออกแบบดึงรายงาน — S8 · spec ใน #155 · แบบ docs/designs/09-modules/h7-dashboard.puml
 
 หน้าตา JSON: docs/designs/09-modules/h7-dashboard-api.md
-ยังไม่เทสตำแหน่ง (lat / lng · แถว location) — controller ยังไม่รับตำแหน่งจาก LINE
+ตำแหน่ง (lat / lng · แถว location) และสติกเกอร์ — H9 ท้ายไฟล์ · spec ใน #219
 """
 
 import base64
@@ -59,6 +59,7 @@ async def conversation(db, tmp_path, *items, line_user_id=LINE_USER_ID):
     """ใบที่วิเคราะห์แล้ว · บทสนทนาตามลำดับ items · ไฟล์รูปเขียนลงดิสก์จริง
 
     item: ("user" | "assistant", "text", ข้อความ) · ("user", "image", เนื้อไฟล์)
+          ("user", "location", (lat, lng)) · ("user", "sticker", keywords คั่นด้วยจุลภาค | None)
     """
     user_id = await db.fetchval(
         """
@@ -80,14 +81,15 @@ async def conversation(db, tmp_path, *items, line_user_id=LINE_USER_ID):
     for order, (role, kind, value) in enumerate(items):
         message_id = await db.fetchval(
             """
-            INSERT INTO messages (session_id, role, type, content, status, created_at)
-            VALUES ($1, $2, $3, $4, 'answered', now() - interval '30 minutes' + make_interval(secs => $5))
+            INSERT INTO messages (session_id, role, type, content, lat, lng, status, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, 'answered', now() - interval '30 minutes' + make_interval(secs => $7))
             RETURNING message_id
             """,
             session_id,
             role,
             kind,
-            value if kind == "text" else None,
+            value if kind in ("text", "sticker") else None,
+            *(value if kind == "location" else (None, None)),
             order,
         )
         message_ids.append(message_id)
@@ -106,12 +108,14 @@ async def conversation(db, tmp_path, *items, line_user_id=LINE_USER_ID):
     )
 
 
-async def report(db, ai_config, talk, *, desc="น้ำท่วมหน้าบ้าน", tags=("น้ำท่วม",), created_at=None, attachment_ids=()):
-    """รายงานหนึ่งใบของใบ talk · ผูกรูปตาม attachment_ids"""
+async def report(
+    db, ai_config, talk, *, desc="น้ำท่วมหน้าบ้าน", tags=("น้ำท่วม",), created_at=None, attachment_ids=(), pin=(None, None)
+):
+    """รายงานหนึ่งใบของใบ talk · ผูกรูปตาม attachment_ids · pin = (lat, lng)"""
     report_id = await db.fetchval(
         """
-        INSERT INTO reports (session_id, ai_config_id, tags, "desc", started_at, created_at)
-        SELECT $1, $2, $3, $4, started_at, coalesce($5::timestamptz, now()) FROM sessions WHERE session_id = $1
+        INSERT INTO reports (session_id, ai_config_id, tags, "desc", started_at, created_at, lat, lng)
+        SELECT $1, $2, $3, $4, started_at, coalesce($5::timestamptz, now()), $6, $7 FROM sessions WHERE session_id = $1
         RETURNING report_id
         """,
         talk.session_id,
@@ -119,6 +123,7 @@ async def report(db, ai_config, talk, *, desc="น้ำท่วมหน้า
         list(tags),
         desc,
         created_at,
+        *pin,
     )
     await db.execute(
         "UPDATE attachments SET report_id = $1 WHERE attachment_id = ANY($2::uuid[])", report_id, list(attachment_ids)
@@ -442,3 +447,43 @@ async def test_session_id_must_be_uuid(client):
     response = await client.get(f"{TRANSCRIPTS}/not-a-uuid", headers=bearer())
 
     assert response.status_code == 422
+
+
+# --- H9 รับตำแหน่งและสติกเกอร์ — S4 S13 · spec ใน #219 · แบบ docs/designs/09-modules/h9-location-sticker.puml ---
+
+
+async def test_transcript_has_pin_and_sticker_rows(client, db, tmp_path):
+    """H9-14. ใบมีข้อความ + หมุด + สติกเกอร์ → เรียงตามเวลา · แถว location มี lat lng · แถว sticker มี content = keywords"""
+    talk = await conversation(
+        db,
+        tmp_path,
+        ("user", "text", "น้ำท่วมหน้าบ้านอีกแล้ว"),
+        ("user", "location", (35.67966, 139.73669)),
+        ("user", "sticker", "cony, sally, Staring, hi, wave, Hello"),
+        ("user", "sticker", None),
+        ("assistant", "text", "ท่วมสูงประมาณไหนคะ"),
+    )
+
+    response = await client.get(f"{TRANSCRIPTS}/{talk.session_id}", headers=bearer())
+
+    assert response.status_code == 200
+    assert [(m["role"], m["type"], m["content"], m["lat"], m["lng"]) for m in response.json()] == [
+        ("user", "text", "น้ำท่วมหน้าบ้านอีกแล้ว", None, None),
+        ("user", "location", None, 35.67966, 139.73669),
+        ("user", "sticker", "cony, sally, Staring, hi, wave, Hello", None, None),
+        ("user", "sticker", None, None, None),
+        ("assistant", "text", "ท่วมสูงประมาณไหนคะ", None, None),
+    ]
+    assert all(m["attachment"] is None for m in response.json())
+
+
+async def test_report_carries_its_pin(client, db, ai_config, tmp_path):
+    """H9-15. รายงานที่มีพิกัด → lat lng ตรง · รายงานที่ไม่มี → null"""
+    talk = await conversation(db, tmp_path, ("user", "text", "น้ำท่วมหน้าบ้าน"), ("user", "location", (35.67966, 139.73669)))
+    pinned = await report(db, ai_config, talk, pin=(35.67966, 139.73669))
+    plain = await report(db, ai_config, talk, desc="ขยะล้นถัง", tags=("ขยะ",))
+
+    response = await client.get(REPORTS, headers=bearer())
+
+    pins = {item["report_id"]: (item["lat"], item["lng"]) for item in response.json()}
+    assert pins == {str(pinned): (35.67966, 139.73669), str(plain): (None, None)}

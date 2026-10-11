@@ -3,7 +3,23 @@
 import asyncio
 import json
 
-from tests.line_webhook import image_event, post_webhook, postback_event, text_event
+import pytest
+
+from tests.line_webhook import (
+    MESSAGE_STICKER_KEYWORDS,
+    MESSAGE_STICKER_TEXT,
+    PIN,
+    PIN_ADDRESS,
+    PIN_TITLE,
+    STICKER_KEYWORDS,
+    audio_event,
+    image_event,
+    location_event,
+    post_webhook,
+    postback_event,
+    sticker_event,
+    text_event,
+)
 
 
 async def accept_pdpa(client, user_id="U_a"):
@@ -150,3 +166,173 @@ async def test_image_before_accept_replies_card_and_stores_nothing(client, db, r
     assert await db.fetchval("SELECT count(*) FROM users") == 0
     assert await db.fetchval("SELECT count(*) FROM messages") == 0
     assert await jobs(redis) == []
+
+
+# --- H9 รับตำแหน่งและสติกเกอร์ — S4 S13 · spec ใน #219 · แบบ docs/designs/09-modules/h9-location-sticker.puml ---
+
+
+async def test_pin_first_opens_session_and_queues_one_chat_job(client, db, redis, replies):
+    """H9-1. ปักหมุดเป็นอย่างแรก (IDLE) → ใบใหม่ · แถว location มี lat lng · content ว่าง · buffer · BUFFERING · งานคุย 1 งาน · บอทไม่ reply"""
+    await accept_pdpa(client)
+
+    response = await post_webhook(
+        client,
+        location_event(
+            *PIN, user_id="U_a", reply_token="rt-1", event_id="ev-1", message_id="loc-1",
+            title=PIN_TITLE, address=PIN_ADDRESS,
+        ),
+    )
+
+    assert response.status_code == 200
+
+    sessions = await open_sessions(db)
+    assert len(sessions) == 1
+    session_id = str(sessions[0]["session_id"])
+
+    pin = await db.fetchrow("SELECT * FROM messages")
+    assert str(pin["session_id"]) == session_id
+    assert pin["line_event_id"] == "ev-1"
+    assert pin["line_message_id"] == "loc-1"
+    assert pin["role"] == "user"
+    assert pin["type"] == "location"
+    assert (pin["lat"], pin["lng"]) == PIN
+    assert pin["content"] is None
+    assert pin["status"] == "pending"
+
+    buffer = await buffer_of(redis, session_id)
+    assert len(buffer) == 1
+    assert buffer[0]["type"] == "location"
+    assert (buffer[0]["lat"], buffer[0]["lng"]) == PIN
+    assert buffer[0]["reply_token"] == "rt-1"
+
+    assert await redis.get(f"session:{session_id}:state") == "BUFFERING"
+    assert await jobs(redis) == [{"kind": "chat", "session_id": session_id}]
+    assert replies == []
+
+
+async def test_pin_without_title_and_address_is_saved(client, db, redis, replies):
+    """H9-2. ปักหมุดที่ LINE ไม่ส่ง title / address → แถว location มี lat lng · งานคุย 1 งาน"""
+    await accept_pdpa(client)
+
+    response = await post_webhook(client, location_event(*PIN, user_id="U_a", event_id="ev-1"))
+
+    assert response.status_code == 200
+    pin = await db.fetchrow("SELECT * FROM messages")
+    assert pin["type"] == "location"
+    assert (pin["lat"], pin["lng"]) == PIN
+    assert len(await jobs(redis)) == 1
+
+
+async def test_sticker_saves_keywords_as_content(client, db, redis, replies):
+    """H9-3. ส่งสติกเกอร์ที่มี keywords → แถว sticker · content = keywords คั่นด้วยจุลภาค · งานคุย 1 งาน · บอทไม่ reply"""
+    await accept_pdpa(client)
+
+    response = await post_webhook(
+        client,
+        sticker_event(STICKER_KEYWORDS, user_id="U_a", reply_token="rt-1", event_id="ev-1", message_id="stk-1"),
+    )
+
+    assert response.status_code == 200
+
+    sessions = await open_sessions(db)
+    assert len(sessions) == 1
+    session_id = str(sessions[0]["session_id"])
+
+    sticker = await db.fetchrow("SELECT * FROM messages")
+    assert sticker["type"] == "sticker"
+    assert sticker["line_message_id"] == "stk-1"
+    assert sticker["role"] == "user"
+    assert sticker["content"] == "cony, sally, Staring, hi, whatsup, line, howdy, HEY, Peeking, wave, peek, Hello, yo, greetings"
+    assert (sticker["lat"], sticker["lng"]) == (None, None)
+    assert sticker["status"] == "pending"
+
+    buffer = await buffer_of(redis, session_id)
+    assert len(buffer) == 1
+    assert buffer[0]["type"] == "sticker"
+    assert buffer[0]["content"] == sticker["content"]
+    assert buffer[0]["reply_token"] == "rt-1"
+
+    assert await redis.get(f"session:{session_id}:state") == "BUFFERING"
+    assert await jobs(redis) == [{"kind": "chat", "session_id": session_id}]
+    assert replies == []
+
+
+async def test_sticker_without_keywords_has_no_content(client, db, redis, replies):
+    """H9-4. สติกเกอร์ที่ LINE ไม่ส่ง keywords → แถว sticker · content ว่าง · งานคุย 1 งาน"""
+    await accept_pdpa(client)
+
+    response = await post_webhook(client, sticker_event(user_id="U_a", event_id="ev-1", resource_type="STATIC"))
+
+    assert response.status_code == 200
+    sticker = await db.fetchrow("SELECT * FROM messages")
+    assert sticker["type"] == "sticker"
+    assert sticker["content"] is None
+    assert len(await jobs(redis)) == 1
+
+
+async def test_message_sticker_keeps_keywords_only(client, db, redis, replies):
+    """H9-5. สติกเกอร์แบบพิมพ์ข้อความได้ (text + keywords) → content = keywords อย่างเดียว ไม่มี text"""
+    await accept_pdpa(client)
+
+    await post_webhook(
+        client,
+        sticker_event(
+            MESSAGE_STICKER_KEYWORDS, MESSAGE_STICKER_TEXT, user_id="U_a", event_id="ev-1", resource_type="MESSAGE"
+        ),
+    )
+
+    sticker = await db.fetchrow("SELECT * FROM messages")
+    assert sticker["type"] == "sticker"
+    assert sticker["content"] == "Anticipation, Sparkle, Straight face, Staring, Thinking"
+
+
+async def test_text_pin_sticker_join_same_session_in_order(client, db, redis, replies):
+    """H9-6. พิมพ์ → ปักหมุด → ส่งสติกเกอร์ (BUFFERING) → ใบเดียว · 3 แถว · buffer เรียงตามที่ส่ง · งานคุยยัง 1 งาน"""
+    await accept_pdpa(client)
+
+    await post_webhook(client, text_event("น้ำท่วมหน้าบ้าน", user_id="U_a", reply_token="rt-1", event_id="ev-1", message_id="m-1"))
+    await post_webhook(client, location_event(*PIN, user_id="U_a", reply_token="rt-2", event_id="ev-2", message_id="loc-2"))
+    await post_webhook(
+        client, sticker_event(STICKER_KEYWORDS, user_id="U_a", reply_token="rt-3", event_id="ev-3", message_id="stk-3")
+    )
+
+    sessions = await open_sessions(db)
+    assert len(sessions) == 1
+    session_id = str(sessions[0]["session_id"])
+
+    assert await db.fetchval("SELECT count(*) FROM messages") == 3
+    buffer = await buffer_of(redis, session_id)
+    assert [item["type"] for item in buffer] == ["text", "location", "sticker"]
+    assert [item["reply_token"] for item in buffer] == ["rt-1", "rt-2", "rt-3"]
+    assert await jobs(redis) == [{"kind": "chat", "session_id": session_id}]
+    assert replies == []
+
+
+@pytest.mark.parametrize(
+    "event",
+    [location_event(*PIN, user_id="U_a", reply_token="rt-7"), sticker_event(STICKER_KEYWORDS, user_id="U_a", reply_token="rt-7")],
+    ids=["pin", "sticker"],
+)
+async def test_pin_or_sticker_before_accept_replies_card_and_stores_nothing(client, db, redis, replies, event):
+    """H9-7. ปักหมุด / ส่งสติกเกอร์ก่อนกดยอมรับ → ได้การ์ดอีกครั้ง · ไม่เก็บ · ไม่มี User · ไม่มีงาน (LC1)"""
+    response = await post_webhook(client, event)
+
+    assert response.status_code == 200
+    assert len(replies) == 1
+    assert replies[0][0] == "rt-7"
+    assert is_pdpa_card(replies[0])
+    assert await db.fetchval("SELECT count(*) FROM users") == 0
+    assert await db.fetchval("SELECT count(*) FROM messages") == 0
+    assert await jobs(redis) == []
+
+
+async def test_audio_is_not_stored_and_gets_no_reply(client, db, redis, replies):
+    """H9-8. ส่งเสียง (ชนิดที่ยังไม่รับ) → 200 · ไม่เก็บ · ไม่มีงาน · บอทไม่ reply"""
+    await accept_pdpa(client)
+
+    response = await post_webhook(client, audio_event(user_id="U_a", event_id="ev-1"))
+
+    assert response.status_code == 200
+    assert await db.fetchval("SELECT count(*) FROM messages") == 0
+    assert await jobs(redis) == []
+    assert replies == []

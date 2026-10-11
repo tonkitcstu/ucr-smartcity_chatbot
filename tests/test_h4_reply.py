@@ -6,7 +6,18 @@ from pathlib import Path
 
 import pytest
 
-from tests.line_webhook import image_event, post_webhook, postback_event, text_event
+from tests.line_webhook import (
+    PIN,
+    PIN_ADDRESS,
+    PIN_TITLE,
+    STICKER_KEYWORDS,
+    image_event,
+    location_event,
+    post_webhook,
+    postback_event,
+    sticker_event,
+    text_event,
+)
 
 ANSWER = "น้ำสูงแค่ไหนครับ"
 CHAT_PROMPT = "คุณคือน้องเมือง"
@@ -237,3 +248,99 @@ async def test_chat_job_through_handle_gets_reply(client, db, redis, outside, ai
 
     assert len(ai_calls) == 1
     assert [token for token, _ in replies] == ["rt-1"]
+
+
+# --- H9 รับตำแหน่งและสติกเกอร์ — S4 S13 · spec ใน #219 · แบบ docs/designs/09-modules/h9-location-sticker.puml ---
+
+PIN_NOTE = "[ระบบ: ผู้แจ้งปักหมุดตำแหน่งแล้ว]"
+STICKER_NOTE = (
+    "[ระบบ: ผู้แจ้งส่งสติกเกอร์ คำบรรยาย: "
+    "cony, sally, Staring, hi, whatsup, line, howdy, HEY, Peeking, wave, peek, Hello, yo, greetings]"
+)
+BARE_STICKER_NOTE = "[ระบบ: ผู้แจ้งส่งสติกเกอร์]"
+
+
+async def test_pin_alone_gets_reply_and_ai_sees_note_without_coordinates(
+    client, db, redis, outside, ai_calls, downloads, replies
+):
+    """H9-9. ปักหมุดอย่างเดียว → AI ได้ system + ป้ายตำแหน่ง ไม่มีพิกัด · ไม่ดาวน์โหลด · reply ด้วย token ของหมุด · ตอบแล้ว · IDLE"""
+    await accept_pdpa(client)
+    await post_webhook(
+        client,
+        location_event(*PIN, user_id="U_a", reply_token="rt-1", event_id="ev-1", title=PIN_TITLE, address=PIN_ADDRESS),
+    )
+    [session] = await db.fetch("SELECT session_id FROM sessions WHERE status = 'open'")
+    session_id = session["session_id"]
+
+    await run_next_job(redis)
+
+    assert len(ai_calls) == 1
+    assert sent_to_ai(ai_calls[0]) == [
+        ("system", "text", CHAT_PROMPT),
+        ("user", "text", PIN_NOTE),
+    ]
+
+    assert downloads == []
+    assert await db.fetchval("SELECT count(*) FROM attachments") == 0
+
+    assert len(replies) == 1
+    reply_token, messages = replies[0]
+    assert reply_token == "rt-1"
+    assert [m.text for m in messages] == [ANSWER]
+
+    assert await db.fetchval("SELECT status FROM messages WHERE type = 'location'") == "answered"
+    assert await redis.llen(f"session:{session_id}:buffer") == 0
+    assert not await redis.exists(f"session:{session_id}:state")
+    assert await history_of(redis, session_id) == [
+        {"role": "user", "type": "text", "content": PIN_NOTE},
+        {"role": "assistant", "type": "text", "content": ANSWER},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("keywords", "note"),
+    [(STICKER_KEYWORDS, STICKER_NOTE), (None, BARE_STICKER_NOTE)],
+    ids=["with-keywords", "no-keywords"],
+)
+async def test_sticker_alone_gets_reply(client, db, redis, outside, ai_calls, downloads, replies, keywords, note):
+    """H9-10, H9-11. สติกเกอร์อย่างเดียว → AI ได้ system + ป้ายสติกเกอร์ (มีคำบรรยาย / เปล่า) · reply 1 ครั้ง · ตอบแล้ว"""
+    await accept_pdpa(client)
+    await post_webhook(client, sticker_event(keywords, user_id="U_a", reply_token="rt-1", event_id="ev-1"))
+
+    await run_next_job(redis)
+
+    assert len(ai_calls) == 1
+    assert sent_to_ai(ai_calls[0]) == [
+        ("system", "text", CHAT_PROMPT),
+        ("user", "text", note),
+    ]
+    assert downloads == []
+    assert [token for token, _ in replies] == ["rt-1"]
+    assert await db.fetchval("SELECT status FROM messages WHERE type = 'sticker'") == "answered"
+
+
+async def test_text_pin_sticker_image_go_to_ai_in_order(client, db, redis, outside, ai_calls, downloads, replies):
+    """H9-12. พิมพ์ + ปักหมุด + สติกเกอร์ + รูป ในรอบเดียว → AI ครั้งเดียว เรียงตามที่ส่ง · ดาวน์โหลดเฉพาะรูป · reply ด้วย token ล่าสุด"""
+    await accept_pdpa(client)
+    await post_webhook(client, text_event("น้ำท่วมหน้าบ้าน", user_id="U_a", reply_token="rt-1", event_id="ev-1", message_id="m-1"))
+    await post_webhook(client, location_event(*PIN, user_id="U_a", reply_token="rt-2", event_id="ev-2", message_id="loc-2"))
+    await post_webhook(
+        client, sticker_event(STICKER_KEYWORDS, user_id="U_a", reply_token="rt-3", event_id="ev-3", message_id="stk-3")
+    )
+    await post_webhook(client, image_event(user_id="U_a", reply_token="rt-4", event_id="ev-4", message_id="img-4"))
+
+    await run_next_job(redis)
+
+    assert downloads == ["img-4"]
+    file_path = await db.fetchval("SELECT file_path FROM attachments")
+
+    assert len(ai_calls) == 1
+    assert sent_to_ai(ai_calls[0]) == [
+        ("system", "text", CHAT_PROMPT),
+        ("user", "text", "น้ำท่วมหน้าบ้าน"),
+        ("user", "text", PIN_NOTE),
+        ("user", "text", STICKER_NOTE),
+        ("user", "image", file_path),
+    ]
+    assert [token for token, _ in replies] == ["rt-4"]
+    assert await db.fetchval("SELECT count(*) FROM messages WHERE role = 'user' AND status = 'answered'") == 4

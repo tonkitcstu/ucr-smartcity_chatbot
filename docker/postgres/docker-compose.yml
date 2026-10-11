@@ -1,0 +1,30 @@
+# PostgreSQL 18 + PostGIS
+# ปกติขึ้นพร้อมทั้งระบบจาก docker-compose.yml ที่ราก repo
+# เปิดตัวเดียว (สั่งจากราก repo): docker compose --env-file .env -f docker/postgres/docker-compose.yml up -d
+
+# ชื่อชุดเดียวกันทั้ง 3 ไฟล์ — เปิดแยกไฟล์ก็ยังได้เครือข่ายและ volume ชุดเดิม
+name: ucr-smartcity_chatbot
+
+services:
+  postgres:
+    # postgres:18 + PostGIS (schema.sql เรียก CREATE EXTENSION postgis)
+    build: .
+    environment:
+      POSTGRES_USER: ucr
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?ตั้ง POSTGRES_PASSWORD ใน .env}
+      POSTGRES_DB: ucr-chat-v2-alpha
+    volumes:
+      # PostgreSQL 18 ขึ้นไปผูก volume ที่ /var/lib/postgresql (รุ่นก่อนหน้าใช้ /var/lib/postgresql/data)
+      - pgdata:/var/lib/postgresql
+      # รันครั้งเดียวตอนฐานยังว่าง — มีข้อมูลแล้วไม่รันซ้ำ
+      - ../../schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ucr -d ucr-chat-v2-alpha"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+# ไม่เปิด port ออกนอกเครื่อง — เข้าได้จาก container ในชุดเดียวกันเท่านั้น
+volumes:
+  pgdata:

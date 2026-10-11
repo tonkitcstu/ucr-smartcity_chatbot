@@ -1,0 +1,24 @@
+# Redis 8
+# ปกติขึ้นพร้อมทั้งระบบจาก docker-compose.yml ที่ราก repo
+# เปิดตัวเดียว (สั่งจากราก repo): docker compose --env-file .env -f docker/redis/docker-compose.yml up -d
+
+# ชื่อชุดเดียวกันทั้ง 3 ไฟล์ — เปิดแยกไฟล์ก็ยังได้เครือข่ายและ volume ชุดเดิม
+name: ucr-smartcity_chatbot
+
+services:
+  redis:
+    image: redis:8
+    # เขียนลงดิสก์ทุก 60 วิถ้ามีการเปลี่ยน — คิวงานกับบทสนทนาที่ค้างอยู่ไม่หายตอน restart
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+# ไม่เปิด port ออกนอกเครื่อง — เข้าได้จาก container ในชุดเดียวกันเท่านั้น
+volumes:
+  redisdata:

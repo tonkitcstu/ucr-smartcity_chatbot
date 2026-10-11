@@ -80,19 +80,36 @@ curl -i http://localhost:8000/health
 ใน container เรียกกันด้วยชื่อ service — compose ใส่ `DATABASE_URL` กับ `REDIS_URL` ทับค่าใน `.env` ให้
 `postgres` กับ `redis` ไม่เปิด port ออกนอกเครื่อง
 
+แต่ละตัวมีไฟล์ของตัวเอง `docker-compose.yml` ที่รากรวม 3 ตัวเข้าด้วยกันและบอกว่าแอปต้องรอฐานพร้อมก่อน
+
+```
+docker-compose.yml              ทั้งระบบ
+docker/
+  app/Dockerfile                image ของแอป
+  app/docker-compose.yml
+  postgres/Dockerfile           postgres:18 + PostGIS
+  postgres/docker-compose.yml
+  redis/docker-compose.yml
+```
+
 | คำสั่ง | ทำอะไร |
 |---|---|
 | `docker compose up -d --build` | แก้โค้ดแล้ว — สร้าง image ใหม่และเปิด |
 | `docker compose up -d` | แก้แค่ค่าใน `.env` |
 | `docker compose logs -f app` | ดู log ของแอป |
 | `docker compose restart app` | เปิดแอปใหม่ |
+| `docker compose up -d --build --no-deps app` | สร้างและเปิดแอปใหม่ตัวเดียว ไม่แตะฐาน |
+| `docker compose stop redis` · `docker compose start redis` | ปิด / เปิดทีละตัว |
 | `docker compose down` | ปิดทั้งระบบ ข้อมูลยังอยู่ |
 | `docker compose down -v` | ปิดและ**ลบฐาน รูป และ Redis ทั้งหมด** |
 
 ต้องรู้:
 
 - `POSTGRES_PASSWORD` ใช้ตอนสร้างฐานครั้งแรกเท่านั้น แก้ทีหลังฐานยังใช้รหัสเดิม แอปจะต่อไม่ได้
-- ชื่อ volume ขึ้นต้นด้วยชื่อโฟลเดอร์ของ repo — เปลี่ยนชื่อโฟลเดอร์แล้ว compose จะสร้าง volume เปล่าชุดใหม่
+- ชื่อชุดตั้งไว้ในไฟล์ (`name: ucr-smartcity_chatbot`) ทุกไฟล์ — volume กับเครือข่ายเป็นชุดเดิมเสมอ ไม่ว่าโฟลเดอร์ชื่ออะไรหรือสั่งจากไฟล์ไหน
+- เปิดจากไฟล์ของตัวเดียวได้ สั่งจากราก repo และต้องใส่ `--env-file .env`:
+  `docker compose --env-file .env -f docker/app/docker-compose.yml up -d --build`
+  แบบนี้แอปไม่รอฐาน ต้องเปิด `postgres` กับ `redis` ไว้ก่อน และ compose จะเตือนว่าเจอ orphan containers (คือตัวที่ไม่อยู่ในไฟล์นั้น) — **อย่าใส่ `--remove-orphans`** มันจะลบ container ของตัวอื่น
 - Redis ดับแล้วกลับมา worker ไม่กลับมาเอง `/health` ตอบ 503 — สั่ง `docker compose restart app`
 - port 8000 ถูกใช้อยู่: ตั้ง `APP_PORT` ใน `.env`
 

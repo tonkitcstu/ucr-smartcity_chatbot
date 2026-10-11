@@ -1,0 +1,68 @@
+# ขึ้นทั้งระบบ: docker compose up -d --build
+# ต้องมี .env (cp .env.example .env) และตั้ง POSTGRES_PASSWORD ในนั้น
+# ไฟล์เดียวใช้ทั้งเครื่อง dev และ EC2 · ngrok / HTTPS อยู่นอกไฟล์นี้
+
+services:
+  app:
+    build: .
+    env_file: .env
+    environment:
+      # ในเครือข่ายของ compose เรียกกันด้วยชื่อ service — ทับค่า localhost ใน .env
+      DATABASE_URL: postgresql://ucr:${POSTGRES_PASSWORD:?ตั้ง POSTGRES_PASSWORD ใน .env}@postgres:5432/ucr-chat-v2-alpha
+      REDIS_URL: redis://redis:6379/0
+      UPLOADS_DIR: /app/uploads
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # /health ตอบ 503 เมื่อ PostgreSQL · Redis · worker · sweeper ขาดตัวใดตัวหนึ่ง → urlopen โยน error → unhealthy
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  postgres:
+    # postgres:18 + PostGIS (schema.sql เรียก CREATE EXTENSION postgis)
+    build: ./docker/postgres
+    environment:
+      POSTGRES_USER: ucr
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?ตั้ง POSTGRES_PASSWORD ใน .env}
+      POSTGRES_DB: ucr-chat-v2-alpha
+    volumes:
+      # PostgreSQL 18 ขึ้นไปผูก volume ที่ /var/lib/postgresql (รุ่นก่อนหน้าใช้ /var/lib/postgresql/data)
+      - pgdata:/var/lib/postgresql
+      # รันครั้งเดียวตอนฐานยังว่าง — มีข้อมูลแล้วไม่รันซ้ำ
+      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ucr -d ucr-chat-v2-alpha"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:8
+    # เขียนลงดิสก์ทุก 60 วิถ้ามีการเปลี่ยน — คิวงานกับบทสนทนาที่ค้างอยู่ไม่หายตอน restart
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+# postgres กับ redis ไม่เปิด port ออกนอกเครื่อง — เข้าได้จาก app เท่านั้น
+volumes:
+  pgdata:
+  redisdata:
+  uploads:

@@ -1,0 +1,126 @@
+@startuml h9-location-sticker
+' H9 รับตำแหน่งและสติกเกอร์ — S4 (ปักหมุดบอกตำแหน่งที่เกิดปัญหา) · S13 (ส่งสติกเกอร์ได้ บอทตอบต่อตามปกติ)
+' กล่อง = ไฟล์ · ลูกศร = ใครเรียกใคร
+' ทางเดินเดียวกับข้อความ text (H2) และรูป (H3): บันทึก → buffer → state → ใบสั่งงานคุย → worker ตอบ (H4) → ปิดใบ ทำรายงาน (H5 H6)
+' ของที่ LINE ส่งมา (เอกสาร Messaging API เปิดดู 2026-10-11)
+'   ตำแหน่ง: latitude, longitude มาเสมอ · title, address มาบางครั้ง
+'   สติกเกอร์: ดึงรูปไม่ได้ ได้แค่ packageId กับ stickerId
+'     keywords = คำที่ LINE ใช้บรรยายสติกเกอร์ ไม่เกิน 15 คำ สุ่มมาใหม่ทุกครั้ง มาบางครั้ง (LINE บอกว่ายังเป็นขั้นทดลอง)
+'       มีทั้งชื่อตัวการ์ตูนและคำบอกท่าทาง ตัวอย่างในเอกสาร: cony, sally, Staring, hi, whatsup, line, howdy, HEY, Peeking, wave, peek, Hello, yo, greetings
+'     text = ข้อความที่ผู้ใช้พิมพ์ลงสติกเกอร์ ไม่เกิน 100 ตัวอักษร มีเฉพาะสติกเกอร์แบบพิมพ์ข้อความได้ — ไม่เก็บ ใช้ keywords อย่างเดียว (Idea 2026-10-11)
+'     สติกเกอร์ที่ผู้ใช้จัดเรียงรวมกันหลายตัว (Sticker Arranging) มาเป็นรหัสตายตัว 30563 / 651698630 ไม่บอกว่ารวมตัวไหนบ้าง
+' ป้ายที่ AI เห็น: Google แนะนำให้ใช้ตัวคั่นที่ชัดเจน และใช้รูปแบบเดียวให้สม่ำเสมอ — prompt ของเราใช้ป้ายวงเล็บเหลี่ยมอยู่แล้ว ([รูป n] [ตำแหน่ง n])
+skinparam defaultFontName "Thonburi"
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+hide footbox
+autonumber
+
+title H9 — รับตำแหน่งและสติกเกอร์ [S4 S13]
+
+actor "LINE\n(ผู้แจ้ง)" as LINE
+box "app" #F7F7F7
+  participant "controllers/\nline.py" as CTRL
+  participant "workers/\nworker.py" as W
+end box
+box "services/" #EEF4FF
+  participant "session" as SESS
+  participant "job" as JOB
+  participant "prompt" as PROMPT
+  participant "communicator" as COMM
+  participant "report" as REP
+end box
+box "clients/" #FFF4E8
+  participant "database\n(PSQL)" as DB
+  participant "line" as CL
+end box
+
+== ข้อความเข้า — ผู้แจ้งยอมรับ PDPA แล้ว ==
+
+LINE -> CTRL : ปักหมุดตำแหน่ง หรือส่งสติกเกอร์
+CTRL -> CTRL : to_incoming(event)\nแกะเป็น IncomingMessage
+note right of CTRL
+  <b>ตำแหน่ง</b> → type location · lat, lng · content ไม่มี
+  <b>สติกเกอร์</b> → type sticker
+     content = keywords (คำที่ LINE ใช้บรรยายสติกเกอร์)
+     คั่นด้วยจุลภาค · LINE ไม่ส่ง keywords มา = ไม่มี
+  <b>text, รูป</b> → ตาม H2, H3
+  <b>ชนิดอื่น</b> (เสียง วิดีโอ ไฟล์) → ไม่เก็บ ไม่ตอบ
+end note
+CTRL -> SESS : open_for — หา/สร้างใบ
+CTRL -> SESS : save_message
+SESS -> DB : insert_message\nบันทึก type, content, lat, lng · role user · ยังไม่ตอบ
+CTRL -> SESS : buffer — ต่อ buffer + เวลาข้อความล่าสุด = ตอนนี้
+CTRL -> SESS : start_buffering
+alt IDLE
+  CTRL -> JOB : enqueue_chat — ใบสั่งงานคุย
+else BUFFERING / PROCESSING / CLOSING
+  CTRL -> CTRL : ไม่ใส่ใบใหม่
+end
+CTRL --> LINE : 200
+
+note over CTRL, JOB #F0F0F0
+  ตำแหน่งหรือสติกเกอร์อย่างเดียวก็ได้ใบสั่งงานคุย — บอทตอบทุกครั้ง
+end note
+
+== worker ตอบ ==
+
+W -> JOB : หยิบใบสั่งงานคุย
+W -> SESS : รอเงียบ → PROCESSING → อ่าน buffer
+note right of W #F0F0F0
+  loading กับการเก็บรูปเป็นไปตาม H4
+  แถวตำแหน่งและสติกเกอร์ไม่มีไฟล์ให้ดาวน์โหลด
+end note
+W -> PROMPT : buffer_to_context(buffer, attachments)
+note right of PROMPT
+  แต่ละรายการเป็น role user เรียงตามลำดับใน buffer
+  <b>ตำแหน่ง</b> → "[ระบบ: ผู้แจ้งปักหมุดตำแหน่งแล้ว]"
+     ตัวคุยไม่เห็นพิกัด
+  <b>สติกเกอร์ มี content</b> →
+     "[ระบบ: ผู้แจ้งส่งสติกเกอร์ คำบรรยาย: cony, sally, Staring, hi, wave, Hello]"
+  <b>สติกเกอร์ ไม่มี content</b> → "[ระบบ: ผู้แจ้งส่งสติกเกอร์]"
+  <b>text</b> → ข้อความ · <b>รูป</b> → ไฟล์รูป
+end note
+W -> PROMPT : build_chat_context\n[prompt ของตัวคุย] + ประวัติ + รอบนี้
+note right of PROMPT
+  prompt ของตัวคุยบอกไว้ว่า บรรทัด [ระบบ: ...]
+  เป็นบันทึกจากระบบว่าผู้แจ้งทำอะไรในไลน์
+  ไม่ใช่คำที่ผู้แจ้งพิมพ์
+  คำบรรยายสติกเกอร์เป็นคำของ LINE มีชื่อตัวการ์ตูนปนอยู่
+  ใช้อ่านอารมณ์ของผู้แจ้งเท่านั้น
+end note
+W -> COMM : chat — เรียก AI + บันทึก ai_calls
+COMM --> W : คำตอบ
+W -> CL : reply ด้วย reply_token ล่าสุดใน buffer
+W -> SESS : finish\nบันทึกคำตอบบอท · ข้อความ → ตอบแล้ว · ต่อประวัติ · ล้าง buffer · IDLE
+
+== ปิดใบ ทำรายงาน ==
+
+W -> SESS : read_transcript — ข้อความทั้งใบจาก PSQL
+W -> PROMPT : build_analyse_context
+note right of PROMPT
+  <b>ตำแหน่ง</b> → "[ตำแหน่ง n]" (H6)
+  <b>สติกเกอร์</b> → บรรทัดเดียวกับที่ตัวคุยเห็น
+  prompt ของตัววิเคราะห์บอกไว้ว่า บรรทัด [ระบบ: ...]
+  ไม่ใช่คำของผู้แจ้ง ไม่นับเป็นข้อเท็จจริง
+end note
+W -> REP : save(drafts, transcript)
+REP -> DB : insert_report\nlat, lng = ของแถวตำแหน่งลำดับที่ n ที่ร่างรายงานเลือก
+note right of W #F0F0F0
+  การเรียกตัววิเคราะห์ การลองซ้ำ และการผูกรูป เป็นไปตาม H6
+end note
+
+== ทีมออกแบบขอบทสนทนา ==
+
+note over CTRL, DB
+  GET /api/dashboard/transcripts/{session_id} (H7) ได้ทุกแถวของใบ เรียงตามเวลา
+  แถวตำแหน่ง: "type": "location" · "lat", "lng" มีค่า · "content": null
+  แถวสติกเกอร์: "type": "sticker" · "content": "cony, sally, Staring, hi, wave, Hello" หรือ null
+end note
+
+note over LINE, CL #F0F0F0
+  prompt ของตัวคุยและตัววิเคราะห์อยู่ใน ai_configs แถวล่าสุดของ PSQL (H8)
+  ฐานใหม่ได้ prompt ที่อธิบายป้าย [ระบบ: ...] จาก default_config ตอนเปิดแอปครั้งแรก
+  ฐานที่มี ai_configs อยู่แล้วได้ prompt ชุดนี้เมื่อแอดมินเพิ่ม ai_configs แถวใหม่
+end note
+@enduml

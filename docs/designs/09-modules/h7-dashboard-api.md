@@ -102,9 +102,21 @@
     "lat": 13.75,
     "lng": 100.5,
     "attachment": null
+  },
+  {
+    "message_id": "55ee...",
+    "role": "user",
+    "type": "sticker",
+    "content": "cony, sally, Staring, hi, wave, Hello",
+    "lat": null,
+    "lng": null,
+    "attachment": null
   }
 ]
 ```
+
+`type` เป็น `text` · `image` · `location` · `sticker`
+แถว `sticker`: `content` คือคำที่ LINE ใช้บรรยายสติกเกอร์ (ไม่ใช่คำที่ผู้แจ้งพิมพ์) · LINE ไม่ส่งมาก็เป็น `null`
 
 404 ไม่มี session นี้
 ```json

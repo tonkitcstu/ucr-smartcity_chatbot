@@ -20,8 +20,8 @@ from tests.line_webhook import (
 )
 
 ANSWER = "น้ำสูงแค่ไหนครับ"
-# คำตอบดิบของ AI ตามรูปแบบ ChatAnswer (H10) — ข้อความ ANSWER ไม่มีปุ่ม
-RAW_ANSWER = json.dumps({"text": ANSWER, "buttons": []}, ensure_ascii=False)
+# คำตอบดิบของ AI ตามรูปแบบ ChatAnswer (H10 H11) — ข้อความ ANSWER ข้อความเดียว ไม่มีปุ่ม
+RAW_ANSWER = json.dumps({"texts": [ANSWER], "buttons": []}, ensure_ascii=False)
 CHAT_PROMPT = "คุณคือน้องเมือง"
 CHAT_MODEL = "test-chat-model"
 IMAGE_BYTES = b"fake-jpg"
@@ -373,10 +373,14 @@ LONG_LABEL = "กดตรงนี้เพื่อแชร์ตำแหน
 LABEL_MAX = 20
 
 
-def raw_answer(text, *buttons):
-    """คำตอบดิบของ AI ตามรูปแบบ ChatAnswer · ปุ่ม = (type, label)"""
+def raw_answer(texts, *buttons):
+    """คำตอบดิบของ AI ตามรูปแบบ ChatAnswer · texts = ข้อความเดียว (str) หรือหลายข้อความ (list) · ปุ่ม = (type, label)"""
     return json.dumps(
-        {"text": text, "buttons": [{"type": kind, "label": label} for kind, label in buttons]}, ensure_ascii=False
+        {
+            "texts": [texts] if isinstance(texts, str) else texts,
+            "buttons": [{"type": kind, "label": label} for kind, label in buttons],
+        },
+        ensure_ascii=False,
     )
 
 
@@ -496,14 +500,14 @@ async def test_more_than_thirteen_buttons_keeps_first_thirteen(client, db, redis
 
 
 async def test_chat_ai_is_asked_for_text_and_three_button_types(client, db, redis, outside, ai_schemas):
-    """H10-9. ตัวคุยถูกเรียกพร้อมรูปแบบคำตอบ: text + buttons · ชนิดปุ่มที่เลือกได้ = location, camera, camera_roll"""
+    """H10-9. ตัวคุยถูกเรียกพร้อมรูปแบบคำตอบ: texts + buttons · ชนิดปุ่มที่เลือกได้ = location, camera, camera_roll"""
     await accept_pdpa(client)
     await post_webhook(client, text_event("น้ำท่วมหน้าบ้าน", user_id="U_a", reply_token="rt-1", event_id="ev-1"))
     await run_next_job(redis)
 
     [schema] = ai_schemas
     described = schema.model_json_schema()
-    assert set(described["properties"]) == {"text", "buttons"}
+    assert set(described["properties"]) == {"texts", "buttons"}
     button = described["$defs"]["QuickReplyButton"]
     assert set(button["properties"]) == {"type", "label"}
     assert button["properties"]["type"]["enum"] == ["location", "camera", "camera_roll"]
@@ -534,3 +538,172 @@ async def test_answer_that_is_not_the_format_is_recorded_as_error(client, db, re
     ai_call = await db.fetchrow("SELECT kind, status, error, response FROM ai_calls")
     assert (ai_call["kind"], ai_call["status"], ai_call["response"]) == ("communicator", "error", "ขอโทษค่ะ ตอนนี้ตอบไม่ได้")
     assert ai_call["error"]
+
+
+# --- H11 ตัวคุยแยกคำตอบเป็นหลายข้อความ — milestone 2.0.1 ข้อ 2 · spec ใน #233 · แบบ docs/designs/09-modules/h11-multi-message.puml ---
+
+# คำตอบที่ AI แต่งตอนลองยิงจริง 2026-10-13 — สองข้อความ + ปุ่ม location
+FEEL = "เป็นมาตั้งสามปีแล้ว แถมท่วมสูงถึงเข่าแบบนี้ หนักหนาเหมือนกันนะคะ"
+ASK_WHERE = (
+    "เวลาฝนตกทีนึง น้ำมักจะท่วมช่วงไหนหรือกี่โมงคะ "
+    "แล้วพอจะแชร์ตำแหน่งตรงแถวหลังวัดให้ดูหน่อยได้ไหมคะ หรือพิมพ์บอกคร่าว ๆ ก็ได้ค่ะ"
+)
+TEXTS_MAX = 5
+
+
+def numbered(count):
+    """ข้อความ count ข้อความ: ข้อความที่ 1 … ข้อความที่ count"""
+    return [f"ข้อความที่ {n}" for n in range(1, count + 1)]
+
+
+async def bot_rows(db):
+    """คำตอบของบอทใน messages เรียงแบบเดียวกับที่บทสนทนาอ่าน (created_at)"""
+    rows = await db.fetch("SELECT content, status FROM messages WHERE role = 'assistant' ORDER BY created_at")
+    return [(row["content"], row["status"]) for row in rows]
+
+
+async def test_two_texts_go_out_in_one_reply_and_are_kept_one_by_one(client, db, redis, outside, ai_answers, replies):
+    """H11-1. AI ตอบ 2 ข้อความ + ปุ่ม location → reply ครั้งเดียว 2 ข้อความตามลำดับ ปุ่มอยู่ที่ข้อความสุดท้าย
+    messages และประวัติเก็บข้อความละรายการตามลำดับ · บทสนทนาที่ตัววิเคราะห์อ่านเรียงเหมือนกัน · ai_calls ok"""
+    from app.services import session
+
+    raw = raw_answer([FEEL, ASK_WHERE], PIN_BUTTON)
+    await chat_one_round(client, redis, ai_answers, raw)
+    session_id = await db.fetchval("SELECT session_id FROM sessions WHERE status = 'open'")
+
+    [(reply_token, messages)] = replies
+    assert reply_token == "rt-1"
+    assert [m.text for m in messages] == [FEEL, ASK_WHERE]
+    assert [quick_reply_of(m) for m in messages] == [[], [("location", "แชร์ตำแหน่ง")]]
+
+    assert await bot_rows(db) == [(FEEL, "answered"), (ASK_WHERE, "answered")]
+    transcript = await session.read_transcript(session_id)
+    assert [(m.role, m.content) for m in transcript] == [
+        ("user", "น้ำท่วมหน้าบ้าน"),
+        ("assistant", FEEL),
+        ("assistant", ASK_WHERE),
+    ]
+    assert await history_of(redis, session_id) == [
+        {"role": "user", "type": "text", "content": "น้ำท่วมหน้าบ้าน"},
+        {"role": "assistant", "type": "text", "content": FEEL},
+        {"role": "assistant", "type": "text", "content": ASK_WHERE},
+    ]
+
+    ai_call = await db.fetchrow("SELECT status, error, response FROM ai_calls")
+    assert (ai_call["status"], ai_call["error"], ai_call["response"]) == ("ok", None, raw)
+
+
+async def test_five_texts_are_all_sent_with_buttons_on_the_last(client, db, redis, outside, ai_answers, replies):
+    """H11-2. AI ตอบ 5 ข้อความพอดี + ปุ่ม camera กับ camera_roll → ส่งครบ 5 คำเดิม · ปุ่มอยู่ที่ข้อความที่ 5 เท่านั้น · status ok"""
+    texts = numbered(TEXTS_MAX)
+    await chat_one_round(client, redis, ai_answers, raw_answer(texts, CAMERA_BUTTON, ALBUM_BUTTON))
+
+    [(_, messages)] = replies
+    assert [m.text for m in messages] == texts
+    assert [quick_reply_of(m) for m in messages] == [
+        [], [], [], [], [("camera", "ถ่ายรูป"), ("cameraRoll", "เลือกจากอัลบั้ม")],
+    ]
+    assert await bot_rows(db) == [(text, "answered") for text in texts]
+    ai_call = await db.fetchrow("SELECT status, error FROM ai_calls")
+    assert (ai_call["status"], ai_call["error"]) == ("ok", None)
+
+
+async def test_more_than_five_texts_fold_the_rest_into_the_fifth(client, db, redis, outside, ai_answers, replies):
+    """H11-3. AI ตอบ 7 ข้อความ → ส่ง 5: สี่ข้อความแรกคงเดิม ข้อความที่ 5 = ข้อความที่ 5–7 ต่อกันคั่นด้วยขึ้นบรรทัดใหม่
+    ai_calls status warning บอกจำนวน 7 · response ยังเป็น JSON เดิม · messages เก็บ 5 แถวตามที่ส่ง"""
+    texts = numbered(7)
+    sent = [*texts[:4], "ข้อความที่ 5\nข้อความที่ 6\nข้อความที่ 7"]
+    raw = raw_answer(texts)
+    await chat_one_round(client, redis, ai_answers, raw)
+
+    [(_, messages)] = replies
+    assert [m.text for m in messages] == sent
+    assert await bot_rows(db) == [(text, "answered") for text in sent]
+
+    ai_call = await db.fetchrow("SELECT status, error, response FROM ai_calls")
+    assert ai_call["status"] == "warning"
+    assert "7" in ai_call["error"]
+    assert ai_call["response"] == raw
+
+
+@pytest.mark.parametrize("blank", ["", "   ", "\n"], ids=["empty", "spaces", "newline"])
+async def test_blank_text_is_dropped_and_the_rest_is_sent(client, db, redis, outside, ai_answers, replies, blank):
+    """H11-4. ข้อความว่างปนกับข้อความที่ดี → ข้อความว่างถูกตัดทิ้ง ข้อความที่ดีส่งตามลำดับ · status warning"""
+    await chat_one_round(client, redis, ai_answers, raw_answer([FEEL, blank, ASK_WHERE]))
+
+    [(_, messages)] = replies
+    assert [m.text for m in messages] == [FEEL, ASK_WHERE]
+    assert await bot_rows(db) == [(FEEL, "answered"), (ASK_WHERE, "answered")]
+    ai_call = await db.fetchrow("SELECT status, error FROM ai_calls")
+    assert ai_call["status"] == "warning"
+    assert ai_call["error"]
+
+
+async def test_five_is_counted_after_blank_texts_are_dropped(client, db, redis, outside, ai_answers, replies):
+    """H11-5. 5 ข้อความที่ดี + ข้อความว่าง 2 ข้อความแทรกอยู่ → ส่งครบ 5 คำเดิม ไม่ถูกรวม · status warning เพราะตัดข้อความว่าง"""
+    texts = numbered(TEXTS_MAX)
+    with_blanks = [texts[0], "", *texts[1:4], "  ", texts[4]]
+    await chat_one_round(client, redis, ai_answers, raw_answer(with_blanks))
+
+    [(_, messages)] = replies
+    assert [m.text for m in messages] == texts
+    assert await db.fetchval("SELECT status FROM ai_calls") == "warning"
+
+
+@pytest.mark.parametrize("texts", [[], ["", "  "]], ids=["empty-list", "all-blank"])
+async def test_no_text_left_is_recorded_as_error(client, db, redis, outside, ai_answers, replies, texts):
+    """H11-6. ไม่เหลือข้อความให้ส่ง → ไม่ reply · ไม่มีแถวของบอท · ai_calls status error มีเหตุ · response = ของดิบ · โยน error ต่อ (นอก happy path)"""
+    raw = raw_answer(texts)
+
+    with pytest.raises(ValueError):
+        await chat_one_round(client, redis, ai_answers, raw)
+
+    assert replies == []
+    assert await bot_rows(db) == []
+    ai_call = await db.fetchrow("SELECT kind, status, error, response FROM ai_calls")
+    assert (ai_call["kind"], ai_call["status"], ai_call["response"]) == ("communicator", "error", raw)
+    assert ai_call["error"]
+
+
+async def test_text_and_button_warnings_are_recorded_together(client, db, redis, outside, ai_answers, replies):
+    """H11-7. AI ตอบ 6 ข้อความ และคำบนปุ่มยาวเกิน 20 → ส่ง 5 ข้อความ ปุ่มที่ตัดคำแล้วอยู่ที่ข้อความที่ 5
+    ai_calls status warning แถวเดียว เหตุมีทั้งเรื่องข้อความและเรื่องปุ่ม"""
+    await chat_one_round(client, redis, ai_answers, raw_answer(numbered(6), ("location", LONG_LABEL)))
+
+    [(_, messages)] = replies
+    assert len(messages) == TEXTS_MAX
+    assert messages[-1].text == "ข้อความที่ 5\nข้อความที่ 6"
+    assert [quick_reply_of(m) for m in messages] == [[], [], [], [], [("location", LONG_LABEL[:LABEL_MAX])]]
+
+    [ai_call] = await db.fetch("SELECT status, error FROM ai_calls")
+    assert ai_call["status"] == "warning"
+    assert "6" in ai_call["error"]
+    assert "location" in ai_call["error"]
+
+
+async def test_chat_ai_is_asked_for_a_list_of_texts(client, db, redis, outside, ai_schemas):
+    """H11-8. รูปแบบคำตอบที่ส่งให้ AI: texts เป็นรายการของ string"""
+    await accept_pdpa(client)
+    await post_webhook(client, text_event("น้ำท่วมหน้าบ้าน", user_id="U_a", reply_token="rt-1", event_id="ev-1"))
+    await run_next_job(redis)
+
+    [schema] = ai_schemas
+    texts = schema.model_json_schema()["properties"]["texts"]
+    assert texts["type"] == "array"
+    assert texts["items"] == {"type": "string"}
+
+
+async def test_next_round_shows_ai_each_of_its_texts(client, db, redis, outside, ai_answers, ai_calls):
+    """H11-9. คุยรอบที่ 2 หลังรอบที่ตอบ 2 ข้อความ → AI เห็นคำตอบรอบก่อนเป็นข้อความฝั่ง assistant 2 รายการติดกัน ข้อความล้วน"""
+    await chat_one_round(client, redis, ai_answers, raw_answer([FEEL, ASK_WHERE], PIN_BUTTON))
+
+    await post_webhook(client, text_event("แถวหลังวัดค่ะ", user_id="U_a", reply_token="rt-2", event_id="ev-2", message_id="m-2"))
+    await run_next_job(redis)
+
+    assert sent_to_ai(ai_calls[1]) == [
+        ("system", "text", CHAT_PROMPT),
+        ("user", "text", "น้ำท่วมหน้าบ้าน"),
+        ("assistant", "text", FEEL),
+        ("assistant", "text", ASK_WHERE),
+        ("user", "text", "แถวหลังวัดค่ะ"),
+    ]

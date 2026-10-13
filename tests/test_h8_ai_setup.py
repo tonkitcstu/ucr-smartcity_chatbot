@@ -98,7 +98,7 @@ async def test_first_chat_uses_default_chat_prompt(empty_ai_tables, client, db, 
 
     async def fake_chat(model, messages, schema):
         chats.append((model, messages))
-        return AiReply(text='{"text": "น้ำสูงแค่ไหนคะ", "buttons": []}', input_tokens=1, output_tokens=1)
+        return AiReply(text='{"texts": ["น้ำสูงแค่ไหนคะ"], "buttons": []}', input_tokens=1, output_tokens=1)
 
     async def fake_show_loading(line_user_id):
         pass
@@ -118,7 +118,8 @@ async def test_first_chat_uses_default_chat_prompt(empty_ai_tables, client, db, 
 
 @live_ai
 async def test_live_chat_answers_in_chat_answer_format_with_tokens():
-    """5 · H10-13. LIVE_AI=1 · ai.chat กับ Gemini จริงพร้อมรูปแบบ ChatAnswer → แกะเป็น ChatAnswer ผ่าน · มีข้อความ · มี token"""
+    """5 · H10-13 · H11-11. LIVE_AI=1 · ai.chat กับ Gemini จริงพร้อมรูปแบบ ChatAnswer → แกะเป็น ChatAnswer ผ่าน
+    มีอย่างน้อย 1 ข้อความ ไม่มีข้อความว่าง · มี token"""
     from app.clients import ai
     from app.core import default_config
     from app.models.answer import ChatAnswer
@@ -134,7 +135,8 @@ async def test_live_chat_answers_in_chat_answer_format_with_tokens():
     )
 
     answer = ChatAnswer.model_validate_json(reply.text)
-    assert answer.text.strip()
+    assert answer.texts
+    assert all(text.strip() for text in answer.texts)
     assert reply.input_tokens
     assert reply.output_tokens
 
@@ -183,3 +185,14 @@ def test_default_chat_prompt_explains_buttons():
     for kind in ("location", "camera", "camera_roll"):
         assert kind in default_config.CHAT_PROMPT
     assert "20" in default_config.CHAT_PROMPT
+
+
+# --- H11 ตัวคุยแยกคำตอบเป็นหลายข้อความ — milestone 2.0.1 ข้อ 2 · spec ใน #233 · แบบ docs/designs/09-modules/h11-multi-message.puml ---
+
+
+def test_default_chat_prompt_explains_splitting_texts():
+    """H11-10. prompt ตัวคุยบอกว่าตอบเป็น texts ได้หลายข้อความ และห้ามเกิน 5 ข้อความ"""
+    from app.core import default_config
+
+    assert "texts" in default_config.CHAT_PROMPT
+    assert "5" in default_config.CHAT_PROMPT

@@ -77,7 +77,7 @@ entity ai_calls {
   response : text (ดิบ)
   input_tokens : int
   output_tokens : int
-  * status : ok | error | stream_cut
+  * status : ok | warning | error | stream_cut
   error : text
   * created_at : timestamptz
 }

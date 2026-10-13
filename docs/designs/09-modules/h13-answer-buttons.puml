@@ -1,0 +1,125 @@
+@startuml h13-answer-buttons
+' H13 ตัวคุยยื่นปุ่มคำตอบที่แต่งเอง — milestone 2.0.1 ข้อ 1: AI ใช้ quick reply เป็นตัวเลือกของคำถามตัวเอง
+' กล่อง = ไฟล์ · ลูกศร = ใครเรียกใคร
+' ทางเดินเดียวกับปุ่มใต้ข้อความ (H10) และคำตอบหลายข้อความ (H11) — แผ่นนี้วาดตั้งแต่เรียกตัวคุย จนผู้แจ้งกดปุ่ม
+' ของที่ LINE กำหนด (เอกสาร Messaging API เปิดดู 2026-10-13)
+'   message action — กดแล้ว LINE ส่ง text เป็นข้อความจากผู้ใช้ · text ยาวไม่เกิน 300 · label ใน quick reply ต้องมี ยาวไม่เกิน 20
+'   label กับ text ของ message action นับเป็น grapheme cluster (ตัวอักษรที่ตาเห็น เช่น "น่" นับ 1) ไม่ใช่ UTF-16
+'   ปุ่ม message หายเมื่อผู้ใช้กดปุ่มใดปุ่มหนึ่ง หรือมีข้อความใหม่ในห้อง · location, camera, cameraRoll อยู่จนกว่าจะส่งของมา
+'   quick reply รวมทุกชนิดไม่เกิน 13 ปุ่มต่อข้อความ
+' ลองยิงจริง 2026-10-13 (gemini-3.5-flash-lite ผ่าน OpenAI SDK · stream + json_schema · prompt ร่างที่มีชนิด message · บทสนทนาเดียว 6 รอบ รอบละครั้ง)
+'   ทักครั้งแรก และคำถามเปิด (เกิดจากอะไร · กระทบยังไง) → ไม่มีปุ่ม · ขอตำแหน่ง → ปุ่ม location
+'   ถามว่าร้อนช่วงบ่ายหรือทั้งวัน → ปุ่ม message 2 ปุ่ม ไม่มีปุ่มข้าม
+'   คำบนปุ่ม "ร้อนตลอดทั้งวันเลยค่ะ" ตาเห็น 16 ตัวอักษร · len() ของ Python นับได้ 21 เพราะนับไม้โท ไม้เอก ไม้หันอากาศด้วย
+'   AI ใส่ "ค่ะ" ในคำบนปุ่ม → prompt บอกว่าคำบนปุ่ม message ไม่ใส่คำลงท้าย
+'   input token ของรอบทักครั้งแรก 1,941 → 2,102
+' ลองยิงจริงผ่านโค้ดตัวจริง 2026-10-13 (prompt ตั้งต้นของแผ่นนี้ · บทสนทนาเดียว 5 รอบ รอบละครั้ง)
+'   ทักครั้งแรก → ไม่มีปุ่ม · เล่าเรื่องน้ำท่วม → ขอตำแหน่ง + ปุ่ม location
+'   ปักหมุดมาแล้ว → ถามว่าเกิดบ่อยแค่ไหน + ปุ่ม message 3 ปุ่ม: "ทุกครั้งที่ฝนตก" · "ตกหนักถึงท่วม" · "นานๆ ที"
+'   ถามว่าน้ำท่วมนานไหมกว่าจะลด → ปุ่ม message 3 ปุ่ม: "เป็นชั่วโมง" · "ครึ่งวัน" · "เป็นวัน"
+'   ทุกปุ่ม message: ไม่มีคำลงท้าย ไม่มีปุ่มข้าม · ข้อความที่ส่งเมื่อกด = คำบนปุ่ม · ไม่มีคำเตือน
+'   คำถามหลังได้ตำแหน่งมีปุ่ม message ติดกัน 3 รอบ — ตัวคุยเลือกถามคำถามตอบสั้นต่อกัน
+'   input token ของรอบทักครั้งแรก 2,122
+' ลองบน LINE จริง 2026-10-13 (Idea ลองเอง): ปุ่มคำตอบใช้ได้
+skinparam defaultFontName "Thonburi"
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+hide footbox
+autonumber
+
+title H13 — ตัวคุยยื่นปุ่มคำตอบที่แต่งเอง
+
+actor "LINE\n(ผู้แจ้ง)" as LINE
+box "app" #F7F7F7
+  participant "workers/\nworker.py" as W
+end box
+box "services/" #EEF4FF
+  participant "prompt" as PROMPT
+  participant "communicator" as COMM
+end box
+box "clients/" #FFF4E8
+  participant "ai\n(AI)" as AI
+  participant "database\n(PSQL)" as DB
+  participant "line\n(LINE API)" as CL
+end box
+
+== worker ตอบ — ต่อจากอ่าน buffer และเก็บรูปแล้ว (H4) ==
+
+W -> PROMPT : build_chat_context\n[prompt ของตัวคุย] + ประวัติ + รอบนี้
+note right of PROMPT
+  prompt ของตัวคุย ส่วน "ปุ่มใต้ข้อความ" มีปุ่มสี่ชนิด
+  location · camera · camera_roll (H10) และ <b>message</b>
+  <b>message</b> = ตัวเลือกคำตอบของคำถามในรอบนั้น
+  ใช้กับคำถามที่ตอบได้ด้วยคำสั้น ๆ ไม่กี่แบบ 2 ถึง 4 ปุ่ม
+  คำถามที่อยากให้เขาเล่าเอง ไม่มีปุ่ม message
+  ทุกปุ่มต้องเป็นคำตอบ <b>ไม่มีปุ่มข้ามหรือปฏิเสธ</b>
+  คำบนปุ่มไม่ใส่คำลงท้าย ครับ ค่ะ
+  ปุ่มเป็นทางลัด เขายังพิมพ์ตอบเองได้
+end note
+W -> COMM : chat(session_id, config, messages)
+COMM -> DB : select_model
+COMM -> AI : chat(model, messages, ChatAnswer)\nstream + รูปแบบคำตอบ (json_schema ของ ChatAnswer)
+note right of AI
+  AI ตอบเป็น JSON ก้อนเดียว — คำตอบจริงตอนลองยิง 2026-10-13
+  {
+    "texts": [
+      "ขอบคุณสำหรับตำแหน่งนะคะ แล้วบ้านร้อนแบบนี้
+       เป็นช่วงบ่ายหรือทั้งวันเลยคะ"
+    ],
+    "buttons": [
+      {"type": "message", "label": "เฉพาะช่วงบ่ายค่ะ"},
+      {"type": "message", "label": "ร้อนตลอดทั้งวันเลยค่ะ"}
+    ]
+  }
+  <b>type</b> = location | camera | camera_roll | message
+  <b>label</b> = คำบนปุ่ม AI แต่งเอง
+     ปุ่ม message: คำบนปุ่มคือคำตอบที่ผู้แจ้งจะส่ง
+end note
+AI --> COMM : AiReply — text = JSON ทั้งก้อน + token
+COMM -> COMM : แกะ JSON เป็น ChatAnswer(texts, buttons)\nตรวจข้อความ (H11) · ตรวจคำบนปุ่มทุกชนิด
+note right of COMM
+  <b>นับความยาวแบบที่ตาเห็น</b>
+     สระบน สระล่าง วรรณยุกต์ ไม่นับ
+     "ร้อนตลอดทั้งวันเลยค่ะ" นับ 16
+  <b>ยาวเกิน 20</b>
+     → ตัดเหลือ 20 ตัวแรกที่ตาเห็น
+       สระและวรรณยุกต์ของตัวที่ 20 ยังอยู่
+       ปุ่มยังอยู่ + จดคำเตือน
+  <b>คำว่าง</b> → ตัดปุ่มนั้นทิ้ง + จดคำเตือน
+end note
+COMM -> DB : insert_ai_call\nresponse = JSON ทั้งก้อนตามที่ AI ส่งมา\nมีคำเตือน → status warning · ไม่มี → status ok
+COMM --> W : ChatAnswer — texts + ปุ่มที่ส่งได้
+
+W -> CL : build_quick_reply(answer.buttons)
+note right of CL
+  ปุ่มของเรา → ปุ่มของ LINE ตามลำดับที่ AI ให้
+  location → location action
+  camera → camera action
+  camera_roll → cameraRoll action
+  <b>message → message action</b>
+     label = คำบนปุ่ม
+     text = คำบนปุ่ม (ข้อความที่ LINE ส่งเมื่อกด)
+  ปุ่มต่างชนิดอยู่ในรอบเดียวกันได้ รวมไม่เกิน 13
+end note
+CL --> W : QuickReply หรือไม่มี
+W -> CL : reply ด้วย reply_token ล่าสุดใน buffer\nquick reply อยู่ที่ข้อความสุดท้าย (H11)
+CL --> LINE : คำตอบของบอท + ปุ่มคำตอบใต้กล่องสุดท้าย
+
+== ผู้แจ้งกดปุ่มคำตอบ ==
+
+LINE -> LINE : กดปุ่ม "ร้อนตลอดทั้งวันเลยค่ะ"\nLINE ส่งคำบนปุ่มเป็นข้อความของผู้แจ้ง · ปุ่มหาย
+note right of LINE
+  ข้อความนี้เข้า webhook เป็น message event ชนิด text
+  เหมือนข้อความที่ผู้แจ้งพิมพ์เอง
+  เดินทางเดิมทุกขั้น: บันทึก → buffer → ใบสั่งงานคุย (H2)
+  → worker ตอบ (H4)
+  ผู้แจ้งไม่กดปุ่ม พิมพ์ตอบเอง → ทางเดียวกัน
+end note
+
+note over W, CL #F0F0F0
+  messages และประวัติใน Redis เก็บเฉพาะข้อความ ไม่เก็บปุ่ม (H10) — รอบถัดไป AI เห็นคำถามของตัวเอง แล้วตามด้วยคำตอบของผู้แจ้ง
+  ข้อความที่มาจากการกดปุ่มกับข้อความที่พิมพ์เอง หน้าตาเหมือนกันใน messages
+  วิธีนับความยาวเข้มกว่า LINE เล็กน้อย ("น้ำ" เรานับ 2 LINE นับ 1) — เลขที่เรานับไม่น้อยกว่าของ LINE
+end note
+
+@enduml

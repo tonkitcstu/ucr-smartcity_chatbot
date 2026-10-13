@@ -1,4 +1,4 @@
-"""ภาษาของ LINE: ลายเซ็น, แกะ event, ปุ่มใต้ข้อความ, reply, loading animation, ดาวน์โหลดรูป"""
+"""ภาษาของ LINE: ลายเซ็น, แกะ event, ปุ่มใต้ข้อความ, reply, push, loading animation, ดาวน์โหลดรูป"""
 
 from linebot.v3 import WebhookParser
 from linebot.v3.messaging import (
@@ -9,6 +9,8 @@ from linebot.v3.messaging import (
     CameraRollAction,
     Configuration,
     LocationAction,
+    MulticastRequest,
+    PushMessageRequest,
     QuickReply,
     QuickReplyItem,
     ReplyMessageRequest,
@@ -17,6 +19,7 @@ from linebot.v3.messaging import (
 
 from app.core.config import LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET
 from app.models.line import QuickReplyButton
+from app.models.user import User
 
 parser = WebhookParser(LINE_CHANNEL_SECRET)
 configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
@@ -25,6 +28,8 @@ configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 ACTIONS = {"location": LocationAction, "camera": CameraAction, "camera_roll": CameraRollAction}
 # LINE รับ quick reply ได้สูงสุดกี่ปุ่มต่อข้อความ
 QUICK_REPLY_MAX = 13
+# LINE รับ multicast ได้สูงสุดกี่คนต่อคำขอ
+MULTICAST_MAX = 500
 
 
 def parse_events(body: str, signature: str) -> list:
@@ -48,6 +53,19 @@ async def reply(reply_token: str, messages: list) -> None:
         await AsyncMessagingApi(api_client).reply_message(
             ReplyMessageRequest(reply_token=reply_token, messages=messages)
         )
+
+
+async def push(users: User | list[User], messages: list) -> None:
+    """ส่งหาผู้แจ้งโดยไม่ต้องมี reply token · messages แบบเดียวกับที่ reply รับ · นับโควตาตามจำนวนคนรับ
+    คนเดียว → push · หลายคน → multicast ข้อความชุดเดียวกัน กลุ่มละไม่เกิน MULTICAST_MAX · ไม่มีใคร → ไม่เรียก LINE"""
+    to = [user.line_user_id for user in ([users] if isinstance(users, User) else users)]
+    async with AsyncApiClient(configuration) as api_client:
+        api = AsyncMessagingApi(api_client)
+        if len(to) == 1:
+            await api.push_message(PushMessageRequest(to=to[0], messages=messages))
+            return
+        for start in range(0, len(to), MULTICAST_MAX):
+            await api.multicast(MulticastRequest(to=to[start : start + MULTICAST_MAX], messages=messages))
 
 
 async def show_loading(line_user_id: str) -> None:

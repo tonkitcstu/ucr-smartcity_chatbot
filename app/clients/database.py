@@ -10,7 +10,8 @@ from app.core.config import DATABASE_URL
 from app.models.ai import AiConfig, AiModel, AiReply, Prompt
 from app.models.attachment import Attachment
 from app.models.context import ContextMessage
-from app.models.message import IncomingMessage, Message, TranscriptMessage
+from app.models.line import IncomingMessage
+from app.models.message import Message, TranscriptMessage
 from app.models.report import ReportRow
 from app.models.session import Session
 from app.models.user import User

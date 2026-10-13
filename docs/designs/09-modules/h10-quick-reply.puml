@@ -1,0 +1,126 @@
+@startuml h10-quick-reply
+' H10 ตัวคุยเลือกปุ่มใต้ข้อความ — S4 (ปักหมุดบอกตำแหน่งที่เกิดปัญหา) · S3 (ส่งรูปประกอบเรื่องที่เล่าได้) · R4 (บอกตำแหน่งได้ง่ายด้วยการปักหมุด)
+' กล่อง = ไฟล์ · ลูกศร = ใครเรียกใคร
+' ทางเดินเดียวกับ worker ตอบ (H4): รอเงียบ → PROCESSING → เก็บรูป → ประกอบบทสนทนา → ตัวคุย → reply → IDLE — แผ่นนี้วาดตั้งแต่เรียกตัวคุย
+' ของที่ LINE กำหนด (เอกสาร Messaging API เปิดดู 2026-10-13)
+'   quick reply = ปุ่มใต้ข้อความ ใส่ได้กับข้อความทุกชนิด สูงสุด 13 ปุ่ม · แสดงบน LINE สำหรับ iOS และ Android · รุ่นที่ไม่รองรับเห็นแค่ข้อความ
+'   ปุ่มที่ใช้ได้เฉพาะใน quick reply: location (เปิดหน้าปักหมุด) · camera (เปิดกล้อง) · cameraRoll (เปิดอัลบั้มรูป)
+'     ต้องมี label (คำบนปุ่ม) ไม่เกิน 20 ตัวอักษร · ไม่ตั้งรูปไอคอน LINE ใส่ไอคอนตั้งต้นให้
+'     label นับเป็น grapheme cluster (ตัวอักษรที่ตาเห็น เช่น "น่" นับ 1) ไม่ใช่ UTF-16
+'     เรานับด้วย len() ของ Python ซึ่งนับ "น่" เป็น 2 (น กับไม้เอก) — เลขที่เรานับไม่น้อยกว่าของ LINE
+'   ปุ่มหายเมื่อ: ผู้ใช้กดปุ่ม — ยกเว้น location, camera, cameraRoll อยู่จนกว่าจะส่งของที่รอมา · หรือมีข้อความใหม่ในห้อง
+' ของที่ Google แนะนำ (เอกสาร Gemini API เปิดดู 2026-10-13)
+'   structured output ใช้เมื่อต้องการคำตอบสุดท้ายในรูปแบบที่กำหนด · function calling ใช้เมื่อโมเดลต้องขอให้เราทำงานก่อนตอบ
+'   structured output ใช้กับ stream ได้ — แต่ละชิ้นเป็น JSON บางส่วน ต้องต่อกันครบก่อนแกะ
+' ลองยิงจริง 2026-10-13 (gemini-3.5-flash-lite ผ่าน OpenAI SDK · stream + json_schema): ได้ JSON ถูกรูป ทั้งที่ประวัติฝั่งบอทเป็นข้อความล้วน
+skinparam defaultFontName "Thonburi"
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+hide footbox
+autonumber
+
+title H10 — ตัวคุยเลือกปุ่มใต้ข้อความ [S3 S4]
+
+actor "LINE\n(ผู้แจ้ง)" as LINE
+box "app" #F7F7F7
+  participant "workers/\nworker.py" as W
+end box
+box "services/" #EEF4FF
+  participant "prompt" as PROMPT
+  participant "communicator" as COMM
+  participant "session" as SESS
+end box
+box "clients/" #FFF4E8
+  participant "ai\n(AI)" as AI
+  participant "database\n(PSQL)" as DB
+  participant "line\n(LINE API)" as CL
+end box
+
+== worker ตอบ — ต่อจากอ่าน buffer และเก็บรูปแล้ว (H4) ==
+
+W -> PROMPT : build_chat_context\n[prompt ของตัวคุย] + ประวัติ + รอบนี้
+note right of PROMPT
+  prompt ของตัวคุยมีส่วน "ปุ่มใต้ข้อความ" บอกว่า
+  รอบที่ขอตำแหน่ง → ยื่นปุ่ม location
+  รอบที่ขอรูป → ยื่นปุ่ม camera กับ camera_roll
+  รอบอื่น → ไม่ยื่นปุ่ม
+  คำบนปุ่ม AI แต่งเอง (TC7) · ห้ามยาวเกิน 20 ตัวอักษร
+end note
+W -> COMM : chat(session_id, config, messages)
+COMM -> DB : select_model
+COMM -> AI : chat(model, messages, ChatAnswer)\nstream + รูปแบบคำตอบ (json_schema ของ ChatAnswer)
+note right of AI
+  AI ตอบเป็น JSON ก้อนเดียว มาเป็นชิ้น ๆ ทาง stream
+  ต่อกันครบแล้วได้
+  {
+    "text": "ข้อความที่ผู้แจ้งเห็น",
+    "buttons": [ {"type": "location", "label": "แชร์ตำแหน่ง"} ]
+  }
+  <b>type</b> เป็นได้สามชนิดที่เปิดหน้าจอของ LINE
+     location · camera · camera_roll
+  <b>ไม่ยื่นปุ่ม</b> → "buttons": []
+  คำบนปุ่มที่ AI แต่งตอนลองยิงจริง:
+  แชร์ตำแหน่ง · ถ่ายรูป · เลือกจากอัลบั้ม
+end note
+AI --> COMM : AiReply — text = JSON ทั้งก้อน + token
+COMM -> COMM : แกะ JSON เป็น ChatAnswer(text, buttons)\nตรวจคำบนปุ่มทุกปุ่ม
+note right of COMM
+  <b>คำบนปุ่มยาวเกิน 20 ตัวอักษร</b>
+     → ตัดคำให้เหลือ 20 ตัวแรก ปุ่มยังถูกส่ง + จดคำเตือน
+  <b>คำบนปุ่มว่าง</b> → ไม่มีคำให้ตัด ตัดปุ่มนั้นทิ้ง + จดคำเตือน
+  นับด้วย len() ของ Python — สระบน สระล่าง วรรณยุกต์
+  นับเป็นตัวของมันเอง จึงเข้มกว่าที่ LINE นับ
+  คำที่ไม่เกิน 20 ของเรา ไม่เกิน 20 ของ LINE เสมอ
+end note
+COMM -> DB : insert_ai_call\nresponse = JSON ทั้งก้อนตามที่ AI ส่งมา (คำบนปุ่มตามที่ AI เขียน ก่อนตัด)\nมีคำเตือน → status warning · error = คำเตือน\nไม่มีคำเตือน → status ok
+note right of DB
+  ai_calls.status
+  ok · warning · error · stream_cut
+  (07-dbdiagram)
+end note
+COMM --> W : ChatAnswer — คำบนปุ่มไม่เกิน 20 ทุกปุ่ม
+
+W -> CL : build_quick_reply(answer.buttons)
+note right of CL
+  แปลงปุ่มของเราเป็นปุ่มของ LINE
+  <b>location</b> → LocationAction · <b>camera</b> → CameraAction
+  <b>camera_roll</b> → CameraRollAction
+  เกิน 13 ปุ่ม → เอา 13 ปุ่มแรก
+  ไม่มีปุ่ม → ไม่มี quick reply
+end note
+CL --> W : QuickReply หรือไม่มี
+W -> CL : reply ด้วย reply_token ล่าสุดใน buffer\nTextMessage(text = answer.text, quick_reply)
+CL --> LINE : คำตอบของบอท + ปุ่มใต้ข้อความ
+W -> SESS : finish(session_id, buffer, new_context, answer.text)\nบันทึกคำตอบบอท · ข้อความ → ตอบแล้ว · ต่อประวัติ · ล้าง buffer · IDLE
+note right of SESS
+  messages และประวัติใน Redis เก็บเฉพาะข้อความของบอท
+  ไม่เก็บว่ายื่นปุ่มอะไร — ดูได้จาก ai_calls.response
+  รอบที่ AI ทำผิดกติกาปุ่ม ค้นได้จาก ai_calls
+  ที่ status warning
+end note
+
+note over W, COMM #F0F0F0
+  คำบนปุ่มยาวเกินไม่ทำให้ปุ่มหรือคำตอบเสีย — คำถูกตัด ปุ่มและข้อความยังถึงผู้แจ้ง
+  คำตอบที่แกะเป็น ChatAnswer ไม่ได้ → ai_calls status error พร้อมเหตุ แล้วโยน error ต่อ
+  แบบเดียวกับตัววิเคราะห์ (H6) แต่ไม่ลองซ้ำ — นอก happy path
+end note
+
+== ผู้แจ้งเห็นปุ่ม ==
+
+alt กดปุ่ม location
+  LINE -> LINE : LINE เปิดหน้าปักหมุด ผู้แจ้งเลือกจุดแล้วกดส่ง
+  note right of LINE : เข้ามาเป็นข้อความตำแหน่ง — H9
+else กดปุ่ม camera หรือ camera_roll
+  LINE -> LINE : LINE เปิดกล้องหรืออัลบั้ม ผู้แจ้งเลือกรูปแล้วกดส่ง
+  note right of LINE : เข้ามาเป็นข้อความรูป — H3
+else ไม่กด พิมพ์ต่อเลย
+  LINE -> LINE : ปุ่มหายเองเมื่อมีข้อความใหม่ในห้อง
+  note right of LINE : เข้ามาเป็นข้อความ text — H2
+end
+
+note over LINE, CL #F0F0F0
+  ทุกทางเข้ามาทาง webhook เดิม: บันทึก → buffer → state → ใบสั่งงานคุย → worker ตอบรอบใหม่
+  prompt ของตัวคุยอยู่ใน ai_configs แถวล่าสุดของ PSQL (H8) — ฐานที่มี ai_configs อยู่แล้วได้ส่วนปุ่มเมื่อแอดมินเพิ่มแถวใหม่
+end note
+
+@enduml

@@ -96,9 +96,9 @@ async def test_first_chat_uses_default_chat_prompt(empty_ai_tables, client, db, 
 
     chats = []
 
-    async def fake_chat(model, messages):
+    async def fake_chat(model, messages, schema):
         chats.append((model, messages))
-        return AiReply(text="น้ำสูงแค่ไหนคะ", input_tokens=1, output_tokens=1)
+        return AiReply(text='{"text": "น้ำสูงแค่ไหนคะ", "buttons": []}', input_tokens=1, output_tokens=1)
 
     async def fake_show_loading(line_user_id):
         pass
@@ -117,10 +117,11 @@ async def test_first_chat_uses_default_chat_prompt(empty_ai_tables, client, db, 
 
 
 @live_ai
-async def test_live_chat_answers_with_tokens():
-    """5. LIVE_AI=1 · ai.chat กับ Gemini จริง → ได้ข้อความ + token"""
+async def test_live_chat_answers_in_chat_answer_format_with_tokens():
+    """5 · H10-13. LIVE_AI=1 · ai.chat กับ Gemini จริงพร้อมรูปแบบ ChatAnswer → แกะเป็น ChatAnswer ผ่าน · มีข้อความ · มี token"""
     from app.clients import ai
     from app.core import default_config
+    from app.models.answer import ChatAnswer
     from app.models.context import ContextMessage
 
     reply = await ai.chat(
@@ -129,9 +130,11 @@ async def test_live_chat_answers_with_tokens():
             ContextMessage(role="system", type="text", content=default_config.CHAT_PROMPT),
             ContextMessage(role="user", type="text", content="น้ำท่วมหน้าบ้านทุกครั้งที่ฝนตก"),
         ],
+        ChatAnswer,
     )
 
-    assert reply.text.strip()
+    answer = ChatAnswer.model_validate_json(reply.text)
+    assert answer.text.strip()
     assert reply.input_tokens
     assert reply.output_tokens
 
@@ -168,3 +171,15 @@ def test_default_prompts_explain_system_notes():
     assert "[ระบบ:" in default_config.CHAT_PROMPT
     assert "[ระบบ:" in default_config.ANALYSER_PROMPT
     assert "สติกเกอร์" in default_config.CHAT_PROMPT
+
+
+# --- H10 ตัวคุยเลือกปุ่มใต้ข้อความ — S3 S4 · spec ใน #226 · แบบ docs/designs/09-modules/h10-quick-reply.puml ---
+
+
+def test_default_chat_prompt_explains_buttons():
+    """H10-12. prompt ตัวคุยบอกปุ่มทั้งสามชนิด และห้ามคำบนปุ่มยาวเกิน 20 ตัวอักษร"""
+    from app.core import default_config
+
+    for kind in ("location", "camera", "camera_roll"):
+        assert kind in default_config.CHAT_PROMPT
+    assert "20" in default_config.CHAT_PROMPT

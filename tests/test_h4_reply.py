@@ -20,6 +20,8 @@ from tests.line_webhook import (
 )
 
 ANSWER = "น้ำสูงแค่ไหนครับ"
+# คำตอบดิบของ AI ตามรูปแบบ ChatAnswer (H10) — ข้อความ ANSWER ไม่มีปุ่ม
+RAW_ANSWER = json.dumps({"text": ANSWER, "buttons": []}, ensure_ascii=False)
 CHAT_PROMPT = "คุณคือน้องเมือง"
 CHAT_MODEL = "test-chat-model"
 IMAGE_BYTES = b"fake-jpg"
@@ -43,16 +45,29 @@ async def ai_config(db):
 
 
 @pytest.fixture
-def ai_calls(monkeypatch):
-    """แทน clients/ai.chat — คืน ANSWER · จดว่าได้ model กับ messages อะไร"""
+def ai_answers():
+    """คำตอบดิบที่ AI ปลอมคืนตามลำดับ · ไม่ใส่ หรือหมดแล้ว → RAW_ANSWER"""
+    return []
+
+
+@pytest.fixture
+def ai_schemas():
+    """รูปแบบคำตอบที่ตัวคุยส่งให้ AI ปลอมแต่ละครั้ง"""
+    return []
+
+
+@pytest.fixture
+def ai_calls(monkeypatch, ai_answers, ai_schemas):
+    """แทน clients/ai.chat — คืนคำตอบดิบจาก ai_answers · จดว่าได้ model กับ messages อะไร"""
     from app.clients import ai
     from app.models.ai import AiReply
 
     calls = []
 
-    async def fake_chat(model, messages):
+    async def fake_chat(model, messages, schema):
         calls.append((model, messages))
-        return AiReply(text=ANSWER, input_tokens=10, output_tokens=5)
+        ai_schemas.append(schema)
+        return AiReply(text=ai_answers.pop(0) if ai_answers else RAW_ANSWER, input_tokens=10, output_tokens=5)
 
     monkeypatch.setattr(ai, "chat", fake_chat)
     return calls
@@ -152,7 +167,7 @@ async def test_text_and_image_get_one_reply_with_latest_token(
     assert ai_call["ai_config_id"] == ai_config
     assert ai_call["kind"] == "communicator"
     assert ai_call["status"] == "ok"
-    assert ai_call["response"] == ANSWER
+    assert ai_call["response"] == RAW_ANSWER
 
     assert len(replies) == 1
     reply_token, messages = replies[0]
@@ -344,3 +359,178 @@ async def test_text_pin_sticker_image_go_to_ai_in_order(client, db, redis, outsi
     ]
     assert [token for token, _ in replies] == ["rt-4"]
     assert await db.fetchval("SELECT count(*) FROM messages WHERE role = 'user' AND status = 'answered'") == 4
+
+
+# --- H10 ตัวคุยเลือกปุ่มใต้ข้อความ — S3 S4 · spec ใน #226 · แบบ docs/designs/09-modules/h10-quick-reply.puml ---
+
+ASK_PIN = "ตรงนี้เกิดขึ้นแถวไหนเหรอคะ พอจะแชร์ตำแหน่งให้เมืองหน่อยได้ไหมคะ"
+ASK_PHOTO = "ขอบคุณค่ะ ส่งรูปมาให้เมืองดูได้เลยนะคะ"
+# คำบนปุ่มที่ AI แต่งตอนลองยิงจริง 2026-10-13
+PIN_BUTTON = ("location", "แชร์ตำแหน่ง")
+CAMERA_BUTTON = ("camera", "ถ่ายรูป")
+ALBUM_BUTTON = ("camera_roll", "เลือกจากอัลบั้ม")
+LONG_LABEL = "กดตรงนี้เพื่อแชร์ตำแหน่งที่เกิดเรื่องให้เมือง"
+LABEL_MAX = 20
+
+
+def raw_answer(text, *buttons):
+    """คำตอบดิบของ AI ตามรูปแบบ ChatAnswer · ปุ่ม = (type, label)"""
+    return json.dumps(
+        {"text": text, "buttons": [{"type": kind, "label": label} for kind, label in buttons]}, ensure_ascii=False
+    )
+
+
+def quick_reply_of(message):
+    """[(ชนิด action ของ LINE, คำบนปุ่ม)] ของข้อความที่ส่งกลับ · ไม่มี quick reply → []"""
+    if message.quick_reply is None:
+        return []
+    return [(item.action.type, item.action.label) for item in message.quick_reply.items]
+
+
+async def chat_one_round(client, redis, ai_answers, raw):
+    """ผู้แจ้งพิมพ์หนึ่งข้อความ → worker ตอบด้วยคำตอบดิบ raw"""
+    ai_answers.append(raw)
+    await accept_pdpa(client)
+    await post_webhook(client, text_event("น้ำท่วมหน้าบ้าน", user_id="U_a", reply_token="rt-1", event_id="ev-1"))
+    await run_next_job(redis)
+
+
+async def test_ai_button_becomes_quick_reply_and_only_text_is_kept(client, db, redis, outside, ai_answers, replies):
+    """H10-1. AI ตอบพร้อมปุ่ม location → reply มี quick reply 1 ปุ่ม · messages และประวัติเก็บแค่ข้อความ · ai_calls เก็บ JSON ดิบ status ok"""
+    raw = raw_answer(ASK_PIN, PIN_BUTTON)
+    await chat_one_round(client, redis, ai_answers, raw)
+    session_id = await db.fetchval("SELECT session_id FROM sessions WHERE status = 'open'")
+
+    [(reply_token, [message])] = replies
+    assert reply_token == "rt-1"
+    assert message.text == ASK_PIN
+    assert quick_reply_of(message) == [("location", "แชร์ตำแหน่ง")]
+
+    assert await db.fetchval("SELECT content FROM messages WHERE role = 'assistant'") == ASK_PIN
+    assert await history_of(redis, session_id) == [
+        {"role": "user", "type": "text", "content": "น้ำท่วมหน้าบ้าน"},
+        {"role": "assistant", "type": "text", "content": ASK_PIN},
+    ]
+
+    ai_call = await db.fetchrow("SELECT status, error, response FROM ai_calls")
+    assert (ai_call["status"], ai_call["error"], ai_call["response"]) == ("ok", None, raw)
+
+
+async def test_camera_and_album_buttons_keep_ai_order(client, db, redis, outside, ai_answers, replies):
+    """H10-2. AI ตอบพร้อมปุ่ม camera กับ camera_roll → quick reply 2 ปุ่ม เรียงตามที่ AI ให้"""
+    await chat_one_round(client, redis, ai_answers, raw_answer(ASK_PHOTO, CAMERA_BUTTON, ALBUM_BUTTON))
+
+    [(_, [message])] = replies
+    assert message.text == ASK_PHOTO
+    assert quick_reply_of(message) == [("camera", "ถ่ายรูป"), ("cameraRoll", "เลือกจากอัลบั้ม")]
+
+
+async def test_no_button_means_no_quick_reply(client, db, redis, outside, ai_answers, replies):
+    """H10-3. AI ตอบไม่มีปุ่ม → reply มีข้อความ ไม่มี quick reply · status ok"""
+    await chat_one_round(client, redis, ai_answers, raw_answer(ANSWER))
+
+    [(_, [message])] = replies
+    assert message.text == ANSWER
+    assert message.quick_reply is None
+    assert await db.fetchval("SELECT status FROM ai_calls") == "ok"
+
+
+async def test_label_of_exactly_twenty_is_sent_whole(client, db, redis, outside, ai_answers, replies):
+    """H10-4. คำบนปุ่มยาว 20 ตัวอักษรพอดี → ส่งคำเดิมครบ · status ok"""
+    label = LONG_LABEL[:LABEL_MAX]
+    await chat_one_round(client, redis, ai_answers, raw_answer(ASK_PIN, ("location", label)))
+
+    [(_, [message])] = replies
+    assert quick_reply_of(message) == [("location", label)]
+    ai_call = await db.fetchrow("SELECT status, error FROM ai_calls")
+    assert (ai_call["status"], ai_call["error"]) == ("ok", None)
+
+
+async def test_long_label_is_cut_and_button_still_sent_with_warning(client, db, redis, outside, ai_answers, replies):
+    """H10-5. คำบนปุ่มยาวเกิน 20 → ส่ง 20 ตัวแรก ปุ่มและข้อความยังส่ง · ai_calls status warning บอกชนิดปุ่ม · response ยังเป็นคำเต็ม"""
+    assert len(LONG_LABEL) > LABEL_MAX
+    raw = raw_answer(ASK_PIN, ("location", LONG_LABEL))
+    await chat_one_round(client, redis, ai_answers, raw)
+
+    [(_, [message])] = replies
+    assert message.text == ASK_PIN
+    assert quick_reply_of(message) == [("location", LONG_LABEL[:LABEL_MAX])]
+
+    ai_call = await db.fetchrow("SELECT status, error, response FROM ai_calls")
+    assert ai_call["status"] == "warning"
+    assert "location" in ai_call["error"]
+    assert ai_call["response"] == raw
+    assert await db.fetchval("SELECT content FROM messages WHERE role = 'assistant'") == ASK_PIN
+
+
+@pytest.mark.parametrize("blank", ["", "   "], ids=["empty", "spaces"])
+async def test_blank_label_drops_that_button_only(client, db, redis, outside, ai_answers, replies, blank):
+    """H10-6. ปุ่มคำว่างปนกับปุ่มที่ดี → ปุ่มคำว่างถูกตัดทิ้ง ปุ่มที่ดียังส่ง · status warning"""
+    await chat_one_round(client, redis, ai_answers, raw_answer(ASK_PHOTO, ("camera", blank), ALBUM_BUTTON))
+
+    [(_, [message])] = replies
+    assert message.text == ASK_PHOTO
+    assert quick_reply_of(message) == [("cameraRoll", "เลือกจากอัลบั้ม")]
+    ai_call = await db.fetchrow("SELECT status, error FROM ai_calls")
+    assert ai_call["status"] == "warning"
+    assert "camera" in ai_call["error"]
+
+
+async def test_only_button_blank_sends_text_without_quick_reply(client, db, redis, outside, ai_answers, replies):
+    """H10-7. มีปุ่มเดียวและคำว่าง → reply มีข้อความ ไม่มี quick reply · status warning"""
+    await chat_one_round(client, redis, ai_answers, raw_answer(ASK_PIN, ("location", "")))
+
+    [(_, [message])] = replies
+    assert message.text == ASK_PIN
+    assert message.quick_reply is None
+    assert await db.fetchval("SELECT status FROM ai_calls") == "warning"
+
+
+async def test_more_than_thirteen_buttons_keeps_first_thirteen(client, db, redis, outside, ai_answers, replies):
+    """H10-8. AI ให้ปุ่มเกิน 13 ปุ่ม → quick reply มี 13 ปุ่มแรก (LINE รับได้สูงสุด 13)"""
+    buttons = [("camera", f"ถ่ายรูป {n}") for n in range(1, 15)]
+    await chat_one_round(client, redis, ai_answers, raw_answer(ASK_PHOTO, *buttons))
+
+    [(_, [message])] = replies
+    assert quick_reply_of(message) == [("camera", f"ถ่ายรูป {n}") for n in range(1, 14)]
+
+
+async def test_chat_ai_is_asked_for_text_and_three_button_types(client, db, redis, outside, ai_schemas):
+    """H10-9. ตัวคุยถูกเรียกพร้อมรูปแบบคำตอบ: text + buttons · ชนิดปุ่มที่เลือกได้ = location, camera, camera_roll"""
+    await accept_pdpa(client)
+    await post_webhook(client, text_event("น้ำท่วมหน้าบ้าน", user_id="U_a", reply_token="rt-1", event_id="ev-1"))
+    await run_next_job(redis)
+
+    [schema] = ai_schemas
+    described = schema.model_json_schema()
+    assert set(described["properties"]) == {"text", "buttons"}
+    button = described["$defs"]["QuickReplyButton"]
+    assert set(button["properties"]) == {"type", "label"}
+    assert button["properties"]["type"]["enum"] == ["location", "camera", "camera_roll"]
+
+
+async def test_next_round_shows_ai_its_own_text_without_buttons(client, db, redis, outside, ai_answers, ai_calls):
+    """H10-10. คุยรอบที่ 2 หลังรอบที่มีปุ่ม → AI เห็นคำตอบรอบก่อนเป็นข้อความล้วน ไม่มี JSON ไม่มีปุ่ม"""
+    await chat_one_round(client, redis, ai_answers, raw_answer(ASK_PIN, PIN_BUTTON))
+
+    await post_webhook(client, text_event("แถวหลังวัดค่ะ", user_id="U_a", reply_token="rt-2", event_id="ev-2", message_id="m-2"))
+    await run_next_job(redis)
+
+    assert sent_to_ai(ai_calls[1]) == [
+        ("system", "text", CHAT_PROMPT),
+        ("user", "text", "น้ำท่วมหน้าบ้าน"),
+        ("assistant", "text", ASK_PIN),
+        ("user", "text", "แถวหลังวัดค่ะ"),
+    ]
+
+
+async def test_answer_that_is_not_the_format_is_recorded_as_error(client, db, redis, outside, ai_answers, replies):
+    """H10-11. AI ตอบมาแกะเป็น ChatAnswer ไม่ได้ → ai_calls status error มีเหตุ · response = ของดิบ · โยน error ต่อ (นอก happy path)"""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        await chat_one_round(client, redis, ai_answers, "ขอโทษค่ะ ตอนนี้ตอบไม่ได้")
+
+    ai_call = await db.fetchrow("SELECT kind, status, error, response FROM ai_calls")
+    assert (ai_call["kind"], ai_call["status"], ai_call["response"]) == ("communicator", "error", "ขอโทษค่ะ ตอนนี้ตอบไม่ได้")
+    assert ai_call["error"]

@@ -196,3 +196,14 @@ def test_default_chat_prompt_explains_splitting_texts():
 
     assert "texts" in default_config.CHAT_PROMPT
     assert "5" in default_config.CHAT_PROMPT
+
+
+# --- H13 ตัวคุยยื่นปุ่มคำตอบที่แต่งเอง — milestone 2.0.1 ข้อ 1 · spec ใน #237 · แบบ docs/designs/09-modules/h13-answer-buttons.puml ---
+
+
+def test_default_chat_prompt_explains_answer_buttons():
+    """H13-6. prompt ตัวคุยบอกปุ่มชนิด message และห้ามมีปุ่มข้าม"""
+    from app.core import default_config
+
+    assert "message" in default_config.CHAT_PROMPT
+    assert "ข้าม" in default_config.CHAT_PROMPT.split("# ปุ่มใต้ข้อความ")[1].split("# ห้าม")[0]

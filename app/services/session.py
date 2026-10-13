@@ -6,7 +6,8 @@ from uuid import UUID
 from app.clients import database, redis
 from app.core.config import CLOSE_AFTER_MINUTES
 from app.models.context import ContextMessage
-from app.models.message import IncomingMessage, Message, TranscriptMessage
+from app.models.line import IncomingMessage
+from app.models.message import Message, TranscriptMessage
 from app.models.session import Session
 from app.models.user import User
 

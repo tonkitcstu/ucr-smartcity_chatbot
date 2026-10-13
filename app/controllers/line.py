@@ -11,7 +11,7 @@ from linebot.v3.webhooks import (
 )
 
 from app.clients import line
-from app.models.message import IncomingMessage
+from app.models.line import IncomingMessage
 from app.services import job, pdpa, session, user
 
 async def handle_webhook(body: str, signature: str) -> None:

@@ -33,7 +33,7 @@ async def handle(job: Job) -> None:
 
 
 async def run_chat(job: Job) -> None:
-    """งานคุยหนึ่งใบ: รอเงียบ → PROCESSING → loading → เก็บรูป → AI → reply ด้วย token ล่าสุด → IDLE"""
+    """งานคุยหนึ่งใบ: รอเงียบ → PROCESSING → loading → เก็บรูป → AI → reply ด้วย token ล่าสุด พร้อมปุ่มที่ AI เลือก → IDLE"""
     session_id = job.session_id
     await wait_for_silence(session_id)
     await session.start_processing(session_id)
@@ -47,8 +47,9 @@ async def run_chat(job: Job) -> None:
     messages = await prompt.build_chat_context(config, await session.read_history(session_id), new_context)
     answer = await communicator.chat(session_id, config, messages)
 
-    await line.reply(buffer[-1].reply_token, [TextMessage(text=answer)])
-    await session.finish(session_id, buffer, new_context, answer)
+    message = TextMessage(text=answer.text, quick_reply=line.build_quick_reply(answer.buttons))
+    await line.reply(buffer[-1].reply_token, [message])
+    await session.finish(session_id, buffer, new_context, answer.text)
 
 
 async def run_analyse(job: Job) -> None:

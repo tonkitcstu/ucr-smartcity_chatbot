@@ -11,14 +11,15 @@ from app.models.ai import AiReply
 from app.models.context import ContextMessage
 
 
-async def chat(model: str, messages: list[ContextMessage]) -> AiReply:
-    """เรียกแบบ stream แล้วรวมเป็นคำตอบเดียว + token"""
+async def chat(model: str, messages: list[ContextMessage], schema: type[BaseModel]) -> AiReply:
+    """structured output แบบ stream — แต่ละชิ้นเป็น JSON บางส่วน รวมครบแล้วคืนข้อความดิบ + token"""
     async with AsyncOpenAI(base_url=API_ENDPOINT, api_key=GEMINI_API_KEY) as client:
         stream = await client.chat.completions.create(
             model=model,
             messages=[to_openai(message) for message in messages],
             stream=True,
             stream_options={"include_usage": True},
+            response_format=to_response_format(schema),
         )
         parts, usage = [], None
         async for chunk in stream:
@@ -39,10 +40,7 @@ async def structured(model: str, messages: list[ContextMessage], schema: type[Ba
         response = await client.chat.completions.create(
             model=model,
             messages=[to_openai(message) for message in messages],
-            response_format={
-                "type": "json_schema",
-                "json_schema": {"name": schema.__name__, "schema": schema.model_json_schema()},
-            },
+            response_format=to_response_format(schema),
         )
     usage = response.usage
     return AiReply(
@@ -50,6 +48,11 @@ async def structured(model: str, messages: list[ContextMessage], schema: type[Ba
         input_tokens=usage.prompt_tokens if usage else None,
         output_tokens=usage.completion_tokens if usage else None,
     )
+
+
+def to_response_format(schema: type[BaseModel]) -> dict:
+    """pydantic → รูปแบบคำตอบที่ให้ AI ตอบตาม"""
+    return {"type": "json_schema", "json_schema": {"name": schema.__name__, "schema": schema.model_json_schema()}}
 
 
 def to_openai(message: ContextMessage) -> dict:

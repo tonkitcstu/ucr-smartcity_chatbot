@@ -138,7 +138,7 @@ async def insert_ai_call(
     status: str = "ok",
     error: str | None = None,
 ) -> None:
-    """request เก็บเป็น ContextMessage · response = คำตอบดิบ · status error เก็บเหตุไว้ใน error"""
+    """request เก็บเป็น ContextMessage · response = คำตอบดิบ · status warning / error เก็บเหตุไว้ใน error"""
     await pool.execute(
         """
         INSERT INTO ai_calls

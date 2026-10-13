@@ -94,7 +94,7 @@ CREATE TABLE ai_calls (
     response      text,
     input_tokens  int,
     output_tokens int,
-    status        text NOT NULL CHECK (status IN ('ok', 'error', 'stream_cut')),
+    status        text NOT NULL CHECK (status IN ('ok', 'warning', 'error', 'stream_cut')),
     error         text,
     created_at    timestamptz NOT NULL DEFAULT now()
 );

@@ -16,6 +16,7 @@ class IncomingMessage(BaseModel):
 
 
 class QuickReplyButton(BaseModel):
-    """ปุ่มใต้ข้อความหนึ่งปุ่มที่ตัวคุยเลือก · กดแล้วไลน์เปิดหน้าปักหมุด / กล้อง / อัลบั้มรูป"""
-    type: Literal["location", "camera", "camera_roll"]
+    """ปุ่มใต้ข้อความหนึ่งปุ่มที่ตัวคุยเลือก · location / camera / camera_roll กดแล้วไลน์เปิดหน้าปักหมุด / กล้อง / อัลบั้มรูป
+    message = ปุ่มคำตอบ กดแล้วไลน์ส่งคำบนปุ่มเป็นข้อความของผู้แจ้ง"""
+    type: Literal["location", "camera", "camera_roll", "message"]
     label: str

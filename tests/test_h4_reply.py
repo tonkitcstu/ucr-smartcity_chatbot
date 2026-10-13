@@ -369,8 +369,10 @@ ASK_PHOTO = "ขอบคุณค่ะ ส่งรูปมาให้เม
 PIN_BUTTON = ("location", "แชร์ตำแหน่ง")
 CAMERA_BUTTON = ("camera", "ถ่ายรูป")
 ALBUM_BUTTON = ("camera_roll", "เลือกจากอัลบั้ม")
+# ตาเห็น 32 ตัวอักษร — สระบน สระล่าง วรรณยุกต์ ไม่นับ (H13)
 LONG_LABEL = "กดตรงนี้เพื่อแชร์ตำแหน่งที่เกิดเรื่องให้เมือง"
-LABEL_MAX = 20
+# 20 ตัวแรกที่ตาเห็นของ LONG_LABEL · สระและวรรณยุกต์ของแต่ละตัวยังอยู่
+LONG_LABEL_CUT = "กดตรงนี้เพื่อแชร์ตำแหน่งที่เ"
 
 
 def raw_answer(texts, *buttons):
@@ -440,8 +442,8 @@ async def test_no_button_means_no_quick_reply(client, db, redis, outside, ai_ans
 
 
 async def test_label_of_exactly_twenty_is_sent_whole(client, db, redis, outside, ai_answers, replies):
-    """H10-4. คำบนปุ่มยาว 20 ตัวอักษรพอดี → ส่งคำเดิมครบ · status ok"""
-    label = LONG_LABEL[:LABEL_MAX]
+    """H10-4. คำบนปุ่มยาว 20 ตัวอักษรที่ตาเห็นพอดี (วิธีนับของ H13) → ส่งคำเดิมครบ · status ok"""
+    label = LONG_LABEL_CUT
     await chat_one_round(client, redis, ai_answers, raw_answer(ASK_PIN, ("location", label)))
 
     [(_, [message])] = replies
@@ -451,14 +453,14 @@ async def test_label_of_exactly_twenty_is_sent_whole(client, db, redis, outside,
 
 
 async def test_long_label_is_cut_and_button_still_sent_with_warning(client, db, redis, outside, ai_answers, replies):
-    """H10-5. คำบนปุ่มยาวเกิน 20 → ส่ง 20 ตัวแรก ปุ่มและข้อความยังส่ง · ai_calls status warning บอกชนิดปุ่ม · response ยังเป็นคำเต็ม"""
-    assert len(LONG_LABEL) > LABEL_MAX
+    """H10-5. คำบนปุ่มยาวเกิน 20 → ส่ง 20 ตัวแรกที่ตาเห็น (วิธีนับของ H13) ปุ่มและข้อความยังส่ง
+    ai_calls status warning บอกชนิดปุ่ม · response ยังเป็นคำเต็ม"""
     raw = raw_answer(ASK_PIN, ("location", LONG_LABEL))
     await chat_one_round(client, redis, ai_answers, raw)
 
     [(_, [message])] = replies
     assert message.text == ASK_PIN
-    assert quick_reply_of(message) == [("location", LONG_LABEL[:LABEL_MAX])]
+    assert quick_reply_of(message) == [("location", LONG_LABEL_CUT)]
 
     ai_call = await db.fetchrow("SELECT status, error, response FROM ai_calls")
     assert ai_call["status"] == "warning"
@@ -499,8 +501,9 @@ async def test_more_than_thirteen_buttons_keeps_first_thirteen(client, db, redis
     assert quick_reply_of(message) == [("camera", f"ถ่ายรูป {n}") for n in range(1, 14)]
 
 
-async def test_chat_ai_is_asked_for_text_and_three_button_types(client, db, redis, outside, ai_schemas):
-    """H10-9. ตัวคุยถูกเรียกพร้อมรูปแบบคำตอบ: texts + buttons · ชนิดปุ่มที่เลือกได้ = location, camera, camera_roll"""
+async def test_chat_ai_is_asked_for_text_and_button_types(client, db, redis, outside, ai_schemas):
+    """H10-9. ตัวคุยถูกเรียกพร้อมรูปแบบคำตอบ: texts + buttons
+    ชนิดปุ่มที่เลือกได้ = location, camera, camera_roll และ message (H13)"""
     await accept_pdpa(client)
     await post_webhook(client, text_event("น้ำท่วมหน้าบ้าน", user_id="U_a", reply_token="rt-1", event_id="ev-1"))
     await run_next_job(redis)
@@ -510,7 +513,7 @@ async def test_chat_ai_is_asked_for_text_and_three_button_types(client, db, redi
     assert set(described["properties"]) == {"texts", "buttons"}
     button = described["$defs"]["QuickReplyButton"]
     assert set(button["properties"]) == {"type", "label"}
-    assert button["properties"]["type"]["enum"] == ["location", "camera", "camera_roll"]
+    assert button["properties"]["type"]["enum"] == ["location", "camera", "camera_roll", "message"]
 
 
 async def test_next_round_shows_ai_its_own_text_without_buttons(client, db, redis, outside, ai_answers, ai_calls):
@@ -673,7 +676,7 @@ async def test_text_and_button_warnings_are_recorded_together(client, db, redis,
     [(_, messages)] = replies
     assert len(messages) == TEXTS_MAX
     assert messages[-1].text == "ข้อความที่ 5\nข้อความที่ 6"
-    assert [quick_reply_of(m) for m in messages] == [[], [], [], [], [("location", LONG_LABEL[:LABEL_MAX])]]
+    assert [quick_reply_of(m) for m in messages] == [[], [], [], [], [("location", LONG_LABEL_CUT)]]
 
     [ai_call] = await db.fetch("SELECT status, error FROM ai_calls")
     assert ai_call["status"] == "warning"
@@ -706,4 +709,94 @@ async def test_next_round_shows_ai_each_of_its_texts(client, db, redis, outside,
         ("assistant", "text", FEEL),
         ("assistant", "text", ASK_WHERE),
         ("user", "text", "แถวหลังวัดค่ะ"),
+    ]
+
+
+# --- H13 ตัวคุยยื่นปุ่มคำตอบที่แต่งเอง — milestone 2.0.1 ข้อ 1 · spec ใน #237 · แบบ docs/designs/09-modules/h13-answer-buttons.puml ---
+
+# คำตอบที่ AI แต่งตอนลองยิงจริง 2026-10-13 — คำถาม + ปุ่มคำตอบ 2 ปุ่ม
+ASK_WHEN = "ขอบคุณสำหรับตำแหน่งนะคะ แล้วบ้านร้อนแบบนี้ เป็นช่วงบ่ายหรือทั้งวันเลยคะ"
+AFTERNOON_BUTTON = ("message", "เฉพาะช่วงบ่ายค่ะ")
+# ตาเห็น 16 ตัวอักษร · len() นับได้ 21 เพราะนับไม้โท ไม้เอก ไม้หันอากาศด้วย
+ALL_DAY_BUTTON = ("message", "ร้อนตลอดทั้งวันเลยค่ะ")
+# ตาเห็น 27 ตัวอักษร
+LONG_ANSWER = "ร้อนตั้งแต่สายไปจนถึงค่ำทุกวันเลยค่ะ"
+# 20 ตัวแรกที่ตาเห็นของ LONG_ANSWER
+LONG_ANSWER_CUT = "ร้อนตั้งแต่สายไปจนถึงค่ำทุก"
+
+
+def sent_on_tap(message):
+    """ข้อความที่ LINE จะส่งในนามผู้แจ้งเมื่อกดแต่ละปุ่ม — เฉพาะปุ่มชนิด message"""
+    return [item.action.text for item in message.quick_reply.items if item.action.type == "message"]
+
+
+async def test_answer_buttons_send_their_own_label_when_tapped(client, db, redis, outside, ai_answers, replies):
+    """H13-1. AI ถามพร้อมปุ่ม message 2 ปุ่ม → quick reply 2 ปุ่มตามลำดับ · กดแล้ว LINE ส่งคำบนปุ่ม
+    messages เก็บแค่ข้อความ · ai_calls เก็บ JSON ดิบ status ok"""
+    raw = raw_answer(ASK_WHEN, AFTERNOON_BUTTON, ALL_DAY_BUTTON)
+    await chat_one_round(client, redis, ai_answers, raw)
+
+    [(_, [message])] = replies
+    assert message.text == ASK_WHEN
+    assert quick_reply_of(message) == [("message", "เฉพาะช่วงบ่ายค่ะ"), ("message", "ร้อนตลอดทั้งวันเลยค่ะ")]
+    assert sent_on_tap(message) == ["เฉพาะช่วงบ่ายค่ะ", "ร้อนตลอดทั้งวันเลยค่ะ"]
+
+    assert await db.fetchval("SELECT content FROM messages WHERE role = 'assistant'") == ASK_WHEN
+    ai_call = await db.fetchrow("SELECT status, error, response FROM ai_calls")
+    assert (ai_call["status"], ai_call["error"], ai_call["response"]) == ("ok", None, raw)
+
+
+async def test_answer_button_and_pin_button_go_out_together(client, db, redis, outside, ai_answers, replies):
+    """H13-2. ปุ่ม location กับปุ่ม message ในรอบเดียวกัน → อยู่ใน quick reply ทั้งคู่ เรียงตามที่ AI ให้"""
+    await chat_one_round(client, redis, ai_answers, raw_answer(ASK_PIN, PIN_BUTTON, AFTERNOON_BUTTON))
+
+    [(_, [message])] = replies
+    assert quick_reply_of(message) == [("location", "แชร์ตำแหน่ง"), ("message", "เฉพาะช่วงบ่ายค่ะ")]
+    assert sent_on_tap(message) == ["เฉพาะช่วงบ่ายค่ะ"]
+
+
+async def test_thai_label_is_counted_the_way_it_is_seen(client, db, redis, outside, ai_answers, replies):
+    """H13-3. คำบนปุ่มที่ตาเห็น 16 ตัวอักษร แต่ len() นับได้ 21 → ส่งคำเดิมครบ ไม่ถูกตัด · status ok"""
+    assert len(ALL_DAY_BUTTON[1]) > 20
+    await chat_one_round(client, redis, ai_answers, raw_answer(ASK_WHEN, ALL_DAY_BUTTON))
+
+    [(_, [message])] = replies
+    assert quick_reply_of(message) == [("message", "ร้อนตลอดทั้งวันเลยค่ะ")]
+    ai_call = await db.fetchrow("SELECT status, error FROM ai_calls")
+    assert (ai_call["status"], ai_call["error"]) == ("ok", None)
+
+
+async def test_long_answer_button_is_cut_on_the_button_and_in_what_it_sends(
+    client, db, redis, outside, ai_answers, replies
+):
+    """H13-4. คำบนปุ่ม message ยาวเกิน 20 ตัวอักษรที่ตาเห็น → คำบนปุ่มและข้อความที่ส่งเมื่อกด ถูกตัดเหลือ 20 ตัวแรกเท่ากัน
+    สระและวรรณยุกต์ของตัวที่ 20 ยังอยู่ · status warning บอกชนิดปุ่ม · response ยังเป็นคำเต็ม"""
+    raw = raw_answer(ASK_WHEN, AFTERNOON_BUTTON, ("message", LONG_ANSWER))
+    await chat_one_round(client, redis, ai_answers, raw)
+
+    [(_, [message])] = replies
+    assert quick_reply_of(message) == [("message", "เฉพาะช่วงบ่ายค่ะ"), ("message", LONG_ANSWER_CUT)]
+    assert sent_on_tap(message) == ["เฉพาะช่วงบ่ายค่ะ", LONG_ANSWER_CUT]
+
+    ai_call = await db.fetchrow("SELECT status, error, response FROM ai_calls")
+    assert ai_call["status"] == "warning"
+    assert "message" in ai_call["error"]
+    assert ai_call["response"] == raw
+
+
+async def test_tapped_answer_comes_back_as_the_reporters_own_text(client, db, redis, outside, ai_answers, ai_calls):
+    """H13-5. ผู้แจ้งกดปุ่มคำตอบ → LINE ส่งคำบนปุ่มมาเป็นข้อความ text → บันทึกเป็นข้อความของผู้แจ้ง
+    รอบถัดไป AI เห็นคำถามของตัวเอง (ข้อความล้วน) แล้วตามด้วยคำบนปุ่ม"""
+    await chat_one_round(client, redis, ai_answers, raw_answer(ASK_WHEN, AFTERNOON_BUTTON, ALL_DAY_BUTTON))
+
+    tapped = ALL_DAY_BUTTON[1]
+    await post_webhook(client, text_event(tapped, user_id="U_a", reply_token="rt-2", event_id="ev-2", message_id="m-2"))
+    await run_next_job(redis)
+
+    assert await db.fetchval("SELECT content FROM messages WHERE line_event_id = 'ev-2' AND role = 'user'") == tapped
+    assert sent_to_ai(ai_calls[1]) == [
+        ("system", "text", CHAT_PROMPT),
+        ("user", "text", "น้ำท่วมหน้าบ้าน"),
+        ("assistant", "text", ASK_WHEN),
+        ("user", "text", tapped),
     ]

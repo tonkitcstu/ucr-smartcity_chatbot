@@ -1,0 +1,120 @@
+@startuml h11-multi-message
+' H11 ตัวคุยแยกคำตอบเป็นหลายข้อความ — milestone 2.0.1 ข้อ 2: ตอบแยกได้สูงสุด 5 ข้อความต่อรอบ ให้เหมือนคนพิมพ์คุย
+' กล่อง = ไฟล์ · ลูกศร = ใครเรียกใคร
+' ทางเดินเดียวกับ worker ตอบ (H4) และปุ่มใต้ข้อความ (H10) — แผ่นนี้วาดตั้งแต่เรียกตัวคุย
+' ของที่ LINE กำหนด (เอกสาร Messaging API เปิดดู 2026-10-13)
+'   reply หนึ่งครั้ง (reply token หนึ่งอัน) ส่งได้สูงสุด 5 ข้อความ
+'   ผู้ใช้ได้รับหลายข้อความ → LINE แสดง quick reply ของข้อความสุดท้ายเท่านั้น
+' ลองยิงจริง 2026-10-13 (gemini-3.5-flash-lite ผ่าน OpenAI SDK · stream + json_schema · บทสนทนาเดียว 4 รอบ รอบละครั้ง)
+'   Gemini รับประวัติที่มีข้อความฝั่งบอทหลายข้อความติดกัน
+'   ทักครั้งแรก → 2 ข้อความ · เล่าเรื่องน้ำท่วม → 2 ข้อความ + ปุ่ม location ใต้ข้อความสุดท้าย
+'   ปักหมุดมาแล้ว → 2 ข้อความ ไม่มีปุ่ม · ผู้แจ้งตอบสั้น "ครับ" → 1 ข้อความ + ปุ่ม camera กับ camera_roll
+'   input token ของรอบทักครั้งแรก 1,759 → 1,941 (prompt ส่วนแยกข้อความ + รูปแบบคำตอบใหม่)
+skinparam defaultFontName "Thonburi"
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+hide footbox
+autonumber
+
+title H11 — ตัวคุยแยกคำตอบเป็นหลายข้อความ
+
+actor "LINE\n(ผู้แจ้ง)" as LINE
+box "app" #F7F7F7
+  participant "workers/\nworker.py" as W
+end box
+box "services/" #EEF4FF
+  participant "prompt" as PROMPT
+  participant "communicator" as COMM
+  participant "session" as SESS
+end box
+box "clients/" #FFF4E8
+  participant "ai\n(AI)" as AI
+  participant "database\n(PSQL)" as DB
+  participant "redis\n(Redis)" as RD
+  participant "line\n(LINE API)" as CL
+end box
+
+== worker ตอบ — ต่อจากอ่าน buffer และเก็บรูปแล้ว (H4) ==
+
+W -> PROMPT : build_chat_context\n[prompt ของตัวคุย] + ประวัติ + รอบนี้
+note right of PROMPT
+  prompt ของตัวคุยมีส่วน "แยกข้อความ" บอกว่า
+  ปกติ 1-2 ข้อความ ห้ามเกิน 5
+  หนึ่งข้อความหนึ่งเรื่อง · คำตอบสั้นส่งข้อความเดียว
+  คำถามหรือคำขอของรอบนั้นอยู่ข้อความสุดท้าย
+  <b>ประวัติ</b>: คำตอบรอบก่อนของบอทเป็นหลายข้อความติดกัน
+  ข้อความละหนึ่งรายการ ฝั่ง assistant
+end note
+W -> COMM : chat(session_id, config, messages)
+COMM -> DB : select_model
+COMM -> AI : chat(model, messages, ChatAnswer)\nstream + รูปแบบคำตอบ (json_schema ของ ChatAnswer)
+note right of AI
+  AI ตอบเป็น JSON ก้อนเดียว — คำตอบจริงตอนลองยิง 2026-10-13
+  {
+    "texts": [
+      "แย่จังเลยนะคะ น้ำท่วมถึงเข่าแล้วลูกไปโรงเรียนลำบากด้วย",
+      "จุดนี้น้ำท่วมตรงแถวไหนหรือคะ แชร์ตำแหน่งให้เมืองหน่อยนะคะ
+       หรือจะบอกเป็นคำพูดก็ได้ค่ะ"
+    ],
+    "buttons": [ {"type": "location", "label": "แชร์ตำแหน่ง"} ]
+  }
+  <b>texts</b> = ข้อความที่ผู้แจ้งเห็น เรียงตามลำดับ
+     หนึ่งรายการ = หนึ่งกล่องข้อความในไลน์
+  <b>buttons</b> = ปุ่มใต้ข้อความ ตาม H10
+end note
+AI --> COMM : AiReply — text = JSON ทั้งก้อน + token
+COMM -> COMM : แกะ JSON เป็น ChatAnswer(texts, buttons)\nตรวจข้อความ · ตรวจคำบนปุ่ม (H10)
+note right of COMM
+  <b>ข้อความว่าง</b> (ว่างหรือมีแต่ช่องว่าง)
+     → ตัดข้อความนั้นทิ้ง + จดคำเตือน
+  <b>เกิน 5 ข้อความ</b>
+     → 4 ข้อความแรกคงเดิม ข้อความที่ 5 = ข้อความที่ 5
+       เป็นต้นไปต่อกัน คั่นด้วยขึ้นบรรทัดใหม่
+       เนื้อหาไม่หาย + จดคำเตือน
+  นับ 5 หลังตัดข้อความว่างแล้ว
+end note
+COMM -> DB : insert_ai_call\nresponse = JSON ทั้งก้อนตามที่ AI ส่งมา (ก่อนตัด ก่อนรวม)\nมีคำเตือน → status warning · error = คำเตือนของข้อความและของปุ่ม\nไม่มีคำเตือน → status ok
+COMM --> W : ChatAnswer — texts 1 ถึง 5 ข้อความ ไม่มีข้อความว่าง
+
+W -> CL : build_quick_reply(answer.buttons)
+CL --> W : QuickReply หรือไม่มี
+W -> CL : reply ด้วย reply_token ล่าสุดใน buffer\nTextMessage หนึ่งอันต่อหนึ่งข้อความ เรียงตาม texts\nquick reply อยู่ที่ข้อความสุดท้ายเท่านั้น
+note right of CL
+  reply ครั้งเดียว ส่งทุกข้อความ
+  LINE แสดงปุ่มของข้อความสุดท้าย
+  ข้อความก่อนหน้าไม่มี quick reply
+end note
+CL --> LINE : คำตอบของบอท 1 ถึง 5 กล่องข้อความ + ปุ่มใต้กล่องสุดท้าย
+
+W -> SESS : finish(session_id, buffer, new_context, answer.texts)
+loop ทีละข้อความ ตามลำดับใน texts
+  SESS -> DB : insert_bot_message(session_id, ข้อความ)\nINSERT messages — role assistant · ตอบแล้ว
+end
+note right of DB
+  หนึ่งข้อความ = หนึ่งแถวใน messages
+  บันทึกทีละแถวตามลำดับ created_at จึงเรียงตามที่ส่ง
+  บทสนทนาของตัววิเคราะห์ (H6) และแดชบอร์ด (H7)
+  อ่านจาก messages เรียงตาม created_at
+  จึงเห็นข้อความของบอทแยกกล่องเหมือนที่ผู้แจ้งเห็น
+end note
+SESS -> DB : mark_answered — ข้อความใน buffer → ตอบแล้ว
+SESS -> RD : append_history\nรอบนี้ของผู้แจ้ง + คำตอบของบอท ข้อความละหนึ่งรายการ
+SESS -> RD : clear_buffer · clear_state — IDLE
+note right of RD
+  ประวัติเก็บเฉพาะข้อความ ไม่เก็บปุ่ม (H10)
+  รอบถัดไป AI เห็นคำตอบรอบนี้
+  เป็นข้อความฝั่ง assistant หลายรายการติดกัน
+end note
+
+note over W, COMM #F0F0F0
+  ข้อความว่างหรือเกิน 5 ไม่ทำให้คำตอบเสีย — ข้อความที่เหลือยังถึงผู้แจ้ง
+  ตัดข้อความว่างแล้วไม่เหลือข้อความเลย หรือ texts เป็นลิสต์ว่าง → ไม่มีอะไรให้ส่ง
+  → ai_calls status error พร้อมเหตุ แล้วโยน error ต่อ แบบเดียวกับคำตอบที่แกะเป็น ChatAnswer ไม่ได้ (H10) — นอก happy path
+end note
+
+note over LINE, CL #F0F0F0
+  ทางเดินก่อนถึงตัวคุย (webhook → บันทึก → buffer → state → ใบสั่งงานคุย) และปุ่มที่ผู้แจ้งกด เป็นไปตาม H2 H3 H4 H9 H10
+  prompt ของตัวคุยอยู่ใน ai_configs แถวล่าสุดของ PSQL (H8) — ฐานที่มี ai_configs อยู่แล้วได้ส่วนแยกข้อความเมื่อแอดมินเพิ่มแถวใหม่
+end note
+
+@enduml

@@ -9,6 +9,7 @@ from linebot.v3.messaging import (
     CameraRollAction,
     Configuration,
     LocationAction,
+    MessageAction,
     MulticastRequest,
     PushMessageRequest,
     QuickReply,
@@ -24,8 +25,19 @@ from app.models.user import User
 parser = WebhookParser(LINE_CHANNEL_SECRET)
 configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 
-# ปุ่มของเรา → action ของ LINE (สามชนิดนี้ LINE ให้ใช้เฉพาะใน quick reply)
-ACTIONS = {"location": LocationAction, "camera": CameraAction, "camera_roll": CameraRollAction}
+
+def message_action(label: str) -> MessageAction:
+    """ปุ่มคำตอบ: กดแล้ว LINE ส่งคำบนปุ่มเป็นข้อความของผู้แจ้ง"""
+    return MessageAction(label=label, text=label)
+
+
+# ปุ่มของเรา → action ของ LINE (location, camera, camera_roll LINE ให้ใช้เฉพาะใน quick reply)
+ACTIONS = {
+    "location": LocationAction,
+    "camera": CameraAction,
+    "camera_roll": CameraRollAction,
+    "message": message_action,
+}
 # LINE รับ quick reply ได้สูงสุดกี่ปุ่มต่อข้อความ
 QUICK_REPLY_MAX = 13
 # LINE รับ multicast ได้สูงสุดกี่คนต่อคำขอ

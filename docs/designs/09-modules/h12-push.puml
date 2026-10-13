@@ -1,0 +1,71 @@
+@startuml h12-push
+' H12 ท่อส่ง push message — milestone 2.0.1 ข้อ 3: ระบบ push message ที่ยังไม่มีใครเรียกใช้
+' กล่อง = ไฟล์ · ลูกศร = ใครเรียกใคร
+' reply (H1 H4) ต้องมี reply token จากข้อความที่ผู้แจ้งเพิ่งส่งมา · push ส่งได้ทุกเมื่อ ใช้ LINE user ID ของผู้รับ
+' ของที่ LINE กำหนด (เอกสาร Messaging API เปิดดู 2026-10-13)
+'   push message — POST /v2/bot/message/push · to = user ID หนึ่งคน · messages สูงสุด 5
+'   multicast message — POST /v2/bot/message/multicast · to = รายการ user ID สูงสุด 500 · messages สูงสุด 5 · ทุกคนได้ข้อความชุดเดียวกัน
+'     ส่ง multicast หาคนเดียวได้ แต่ LINE แนะนำ push เมื่อผู้รับมีคนเดียว
+'   ใครได้รับ: push = เพื่อนของ OA หรือคนที่ทักมาในห้องคุยภายใน 7 วัน · multicast = เพื่อนของ OA เท่านั้น
+'   ผู้รับที่บล็อก OA · ลบบัญชี LINE · ยังไม่เป็นเพื่อน → LINE ตอบ 200 แต่เขาไม่ได้รับ
+'   โควตารายเดือนนับ push กับ multicast ตามจำนวนคนรับ ไม่นับจำนวนข้อความในคำขอ · reply ไม่นับ · คนที่ไม่ได้รับไม่นับ
+'   โควตาของเดือนหมด หรือส่งถี่เกิน → LINE ตอบ 429 ไม่ส่ง
+'   quick reply ใส่ได้กับข้อความทุกชนิด (H10)
+' ลองยิงจริง 2026-10-13 (ผ่าน clients/line.push · ครั้งเดียว)
+'   push 1 ข้อความพร้อมปุ่ม location ถึงผู้แจ้ง 1 คน → ข้อความและปุ่มขึ้นบนมือถือ
+'   multicast ยังไม่ได้ลองยิงจริง
+skinparam defaultFontName "Thonburi"
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+hide footbox
+autonumber
+
+title H12 — ท่อส่ง push message
+
+actor "LINE\n(ผู้แจ้ง)" as LINE
+participant "ผู้เรียก" as CALLER
+box "clients/" #FFF4E8
+  participant "line\n(LINE API)" as CL
+end box
+
+note over CALLER #F0F0F0
+  ในแอปยังไม่มีไฟล์ไหนเรียก push
+  ผู้เรียกในแผ่นนี้คือ test
+  ผู้เรียกตัวจริงมากับ milestone 2.0.1 ข้อ 4
+  (ให้บอทเริ่มบทสนทนาเอง)
+end note
+
+CALLER -> CL : push(users, messages)
+note right of CL
+  <b>users</b> = User หนึ่งคน หรือรายการของ User
+     ผู้รับคือ line_user_id ของแต่ละคน
+  <b>messages</b> = รายการข้อความของ LINE 1 ถึง 5 ข้อความ
+     แบบเดียวกับที่ reply รับ
+     ข้อความ · ข้อความพร้อมปุ่ม (H10) · การ์ด (H1)
+  push ส่งตามที่ได้รับ ไม่แต่งข้อความเอง
+end note
+
+alt ผู้รับคนเดียว — User หนึ่งคน หรือรายการที่มีคนเดียว
+  CL --> LINE : push message\nPOST /v2/bot/message/push\nto = line_user_id · messages
+else ผู้รับหลายคน
+  loop ทีละกลุ่ม กลุ่มละไม่เกิน 500 คน เรียงตามรายการ
+    CL --> LINE : multicast message\nPOST /v2/bot/message/multicast\nto = line_user_id ของทั้งกลุ่ม · messages ชุดเดียวกัน
+  end
+else ไม่มีผู้รับ — รายการว่าง
+  CL -> CL : ไม่เรียก LINE
+end
+CL --> CALLER : ส่งแล้ว ไม่คืนค่า
+
+note over CALLER, CL #F0F0F0
+  push ส่งอย่างเดียวเหมือน reply — ไม่บันทึกลง messages ไม่ต่อประวัติใน Redis ไม่ผ่านคิวงาน ไม่แตะ state ของใบ
+  ข้อความที่ส่งถึงชาวบ้านต้องมาจาก AI หรือแอดมินพิมพ์เอง (TC7 — AI เป็นคนเขียนเสมอ ยกเว้น 3 กรณี) เป็นหน้าที่ของผู้เรียก
+  โควตานับตามจำนวนคนรับ — ส่ง 5 ข้อความถึง 1 คนนับ 1 · ส่งถึง 3 คนนับ 3
+end note
+
+note over LINE, CL #F0F0F0
+  LINE ตอบ error (เช่น 429 เมื่อโควตาของเดือนหมด) → error ของ SDK ขึ้นไปถึงผู้เรียก
+  ส่งหลายกลุ่มแล้วพังกลางทาง → กลุ่มก่อนหน้าถึงผู้รับไปแล้ว — นอก happy path
+  LINE ตอบ 200 ทั้งที่ผู้รับบล็อกหรือยังไม่เป็นเพื่อน → จากคำตอบของ LINE ดูไม่ออกว่าข้อความถึงหรือไม่
+end note
+
+@enduml

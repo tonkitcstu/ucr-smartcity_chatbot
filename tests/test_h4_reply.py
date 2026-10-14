@@ -29,15 +29,16 @@ IMAGE_BYTES = b"fake-jpg"
 
 @pytest.fixture
 async def ai_config(db):
-    """ai_configs 1 ชุด — ตัวคุยกับตัววิเคราะห์ใช้ model / prompt เดียวกัน"""
+    """ai_configs 1 ชุดเป็นแถวที่ใช้ (#242) — ตัวคุยกับตัววิเคราะห์ใช้ model / prompt เดียวกัน"""
     model_id = await db.fetchval(
         "INSERT INTO models (provider, name) VALUES ('test', $1) RETURNING model_id", CHAT_MODEL
     )
     prompt_id = await db.fetchval("INSERT INTO prompts (prompt) VALUES ($1) RETURNING prompt_id", CHAT_PROMPT)
+    await db.execute("UPDATE ai_configs SET is_active = false WHERE is_active")
     return await db.fetchval(
         """
-        INSERT INTO ai_configs (chat_model_id, chat_prompt_id, analyzer_model_id, analyzer_prompt_id)
-        VALUES ($1, $2, $1, $2) RETURNING ai_config_id
+        INSERT INTO ai_configs (chat_model_id, chat_prompt_id, analyzer_model_id, analyzer_prompt_id, is_active)
+        VALUES ($1, $2, $1, $2, true) RETURNING ai_config_id
         """,
         model_id,
         prompt_id,
@@ -800,3 +801,29 @@ async def test_tapped_answer_comes_back_as_the_reporters_own_text(client, db, re
         ("assistant", "text", ASK_WHEN),
         ("user", "text", tapped),
     ]
+
+
+# --- #242 เลือกบน DB ได้ว่าจะใช้ ai_configs แถวไหน — spec ใน #242 · แบบ docs/designs/09-modules/242-select-ai-config.puml ---
+
+
+async def test_chat_uses_the_active_config_not_the_newest_row(client, db, redis, outside, ai_config, ai_calls):
+    """242-3. แถวที่ใช้ไม่ใช่แถวล่าสุด → ผู้แจ้งคุยหนึ่งรอบ → ตัวคุยได้ prompt และ model ของแถวที่ใช้ · ai_calls บันทึกแถวที่ใช้"""
+    newer_model = await db.fetchval("INSERT INTO models (provider, name) VALUES ('test', 'newer-model') RETURNING model_id")
+    newer_prompt = await db.fetchval("INSERT INTO prompts (prompt) VALUES ('newer prompt') RETURNING prompt_id")
+    await db.execute(
+        """
+        INSERT INTO ai_configs (chat_model_id, chat_prompt_id, analyzer_model_id, analyzer_prompt_id)
+        VALUES ($1, $2, $1, $2)
+        """,
+        newer_model,
+        newer_prompt,
+    )
+
+    await accept_pdpa(client)
+    await post_webhook(client, text_event("น้ำท่วมหน้าบ้าน", user_id="U_a", reply_token="rt-1", event_id="ev-1"))
+    await run_next_job(redis)
+
+    [(model, messages)] = ai_calls
+    assert model == CHAT_MODEL
+    assert messages[0].content == CHAT_PROMPT
+    assert await db.fetchval("SELECT ai_config_id FROM ai_calls") == ai_config

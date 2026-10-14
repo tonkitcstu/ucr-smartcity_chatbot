@@ -43,6 +43,11 @@ async def counts(db):
     return [await db.fetchval(f"SELECT count(*) FROM {table}") for table in ("ai_configs", "models", "prompts")]
 
 
+async def active_ids(db):
+    """ai_config_id ของแถวที่ถูกเลือก (#242) — ถูกต้องเมื่อมีแถวเดียว"""
+    return [row["ai_config_id"] for row in await db.fetch("SELECT ai_config_id FROM ai_configs WHERE is_active")]
+
+
 async def test_empty_database_gets_default_config(db, redis, empty_ai_tables):
     """1. ฐานว่าง → เปิดแอป → ai_configs 1 · models 2 · prompts 2 ตรงกับ default_config"""
     from app.core import default_config
@@ -68,13 +73,13 @@ async def test_opening_app_again_adds_nothing(db, redis, empty_ai_tables):
 
 
 async def test_existing_config_is_not_replaced(db, redis, empty_ai_tables):
-    """3. มี ai_configs อยู่แล้ว (ไม่ใช่ค่า default) → เปิดแอป → ไม่เพิ่มแถว · แถวเดิมยังเป็นแถวล่าสุด"""
+    """3. มี ai_configs ที่ถูกเลือกอยู่แล้ว (ไม่ใช่ค่า default) → เปิดแอป → ไม่เพิ่มแถว · แถวเดิมยังเป็นแถวที่ใช้ (#242)"""
     model_id = await db.fetchval("INSERT INTO models (provider, name) VALUES ('test', 'own-model') RETURNING model_id")
     prompt_id = await db.fetchval("INSERT INTO prompts (prompt) VALUES ('own prompt') RETURNING prompt_id")
     own = await db.fetchval(
         """
-        INSERT INTO ai_configs (chat_model_id, chat_prompt_id, analyzer_model_id, analyzer_prompt_id)
-        VALUES ($1, $2, $1, $2) RETURNING ai_config_id
+        INSERT INTO ai_configs (chat_model_id, chat_prompt_id, analyzer_model_id, analyzer_prompt_id, is_active)
+        VALUES ($1, $2, $1, $2, true) RETURNING ai_config_id
         """,
         model_id,
         prompt_id,
@@ -83,7 +88,7 @@ async def test_existing_config_is_not_replaced(db, redis, empty_ai_tables):
     await open_app()
 
     assert await counts(db) == [1, 1, 1]
-    assert await db.fetchval("SELECT ai_config_id FROM ai_configs ORDER BY created_at DESC LIMIT 1") == own
+    assert await active_ids(db) == [own]
 
 
 async def test_first_chat_uses_default_chat_prompt(empty_ai_tables, client, db, redis, monkeypatch, replies):
@@ -207,3 +212,84 @@ def test_default_chat_prompt_explains_answer_buttons():
 
     assert "message" in default_config.CHAT_PROMPT
     assert "ข้าม" in default_config.CHAT_PROMPT.split("# ปุ่มใต้ข้อความ")[1].split("# ห้าม")[0]
+
+
+# --- #242 เลือกบน DB ได้ว่าจะใช้ ai_configs แถวไหน — spec ใน #242 · แบบ docs/designs/09-modules/242-select-ai-config.puml ---
+
+
+async def add_config(db, name):
+    """ai_configs 1 แถว — model ชื่อ name · prompt เป็นคำว่า name · ยังไม่ถูกเลือก (is_active ใช้ค่าตั้งต้น)"""
+    model_id = await db.fetchval("INSERT INTO models (provider, name) VALUES ('test', $1) RETURNING model_id", name)
+    prompt_id = await db.fetchval("INSERT INTO prompts (prompt) VALUES ($1) RETURNING prompt_id", name)
+    return await db.fetchval(
+        """
+        INSERT INTO ai_configs (chat_model_id, chat_prompt_id, analyzer_model_id, analyzer_prompt_id)
+        VALUES ($1, $2, $1, $2) RETURNING ai_config_id
+        """,
+        model_id,
+        prompt_id,
+    )
+
+
+async def choose(db, ai_config_id):
+    """แอดมินเลือกแถวที่ใช้ — สองคำสั่งใน transaction เดียวตามแบบ: ปลดแถวเดิมก่อน แล้วตั้งแถวใหม่"""
+    async with db.transaction():
+        await db.execute("UPDATE ai_configs SET is_active = false WHERE is_active")
+        await db.execute("UPDATE ai_configs SET is_active = true WHERE ai_config_id = $1", ai_config_id)
+
+
+async def test_default_config_is_the_active_row(db, redis, empty_ai_tables):
+    """242-1. ฐานว่าง → เปิดแอป → แถวค่าตั้งต้นเป็นแถวที่ใช้"""
+    await open_app()
+
+    [row] = await config_rows(db)
+    assert await active_ids(db) == [row["ai_config_id"]]
+
+
+async def test_rows_without_a_chosen_one_get_a_new_active_default(db, redis, empty_ai_tables):
+    """242-2. มีแถวอยู่แล้วแต่ไม่มีแถวไหนถูกเลือก → เปิดแอป → ได้แถวค่าตั้งต้นใหม่เป็นแถวที่ใช้ · แถวเดิมยังอยู่ ไม่ถูกเลือก"""
+    from app.core import default_config
+
+    old = await add_config(db, "old")
+
+    await open_app()
+
+    assert await counts(db) == [2, 3, 3]
+    [active] = await active_ids(db)
+    assert active != old
+    [row] = [row for row in await config_rows(db) if row["ai_config_id"] == active]
+    assert row["chat_prompt"] == default_config.CHAT_PROMPT
+    assert await db.fetchval("SELECT is_active FROM ai_configs WHERE ai_config_id = $1", old) is False
+
+
+async def test_switching_rows_takes_effect_on_the_next_chat(empty_ai_tables, client, db, redis, monkeypatch, replies):
+    """242-5. แอดมินสลับแถวด้วยสองคำสั่งใน transaction ระหว่างที่แอปเปิดอยู่ → งานคุยรอบถัดไปใช้แถวใหม่ ไม่ต้องเปิดแอปใหม่"""
+    from app.clients import ai, line
+    from app.models.ai import AiReply
+    from app.models.job import Job
+    from app.workers import worker
+
+    models_used = []
+
+    async def fake_chat(model, messages, schema):
+        models_used.append(model)
+        return AiReply(text='{"texts": ["น้ำสูงแค่ไหนคะ"], "buttons": []}', input_tokens=1, output_tokens=1)
+
+    async def fake_show_loading(line_user_id):
+        pass
+
+    monkeypatch.setattr(ai, "chat", fake_chat)
+    monkeypatch.setattr(line, "show_loading", fake_show_loading)
+    first = await add_config(db, "first")
+    second = await add_config(db, "second")
+
+    await choose(db, first)
+    await post_webhook(client, postback_event("pdpa_accept", user_id="U_a", event_id="ev-accept"))
+    await post_webhook(client, text_event("น้ำท่วมหน้าบ้าน", user_id="U_a", event_id="ev-1"))
+    await worker.run_chat(Job.model_validate_json(await redis.lpop("jobs")))
+
+    await choose(db, second)
+    await post_webhook(client, text_event("สูงประมาณเข่า", user_id="U_a", event_id="ev-2"))
+    await worker.run_chat(Job.model_validate_json(await redis.lpop("jobs")))
+
+    assert models_used == ["first", "second"]

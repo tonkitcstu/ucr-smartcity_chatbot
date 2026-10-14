@@ -17,7 +17,7 @@ SESSION_EXPIRED = ("user", "text", "//leave chat because session expired")
 
 @pytest.fixture
 async def ai_config(db):
-    """ai_configs 1 ชุด — ตัวคุยกับตัววิเคราะห์ใช้ model / prompt คนละตัว"""
+    """ai_configs 1 ชุดเป็นแถวที่ใช้ (#242) — ตัวคุยกับตัววิเคราะห์ใช้ model / prompt คนละตัว"""
     chat_model = await db.fetchval(
         "INSERT INTO models (provider, name) VALUES ('test', $1) RETURNING model_id", CHAT_MODEL
     )
@@ -28,10 +28,11 @@ async def ai_config(db):
     analyser_prompt = await db.fetchval(
         "INSERT INTO prompts (prompt) VALUES ($1) RETURNING prompt_id", ANALYSER_PROMPT
     )
+    await db.execute("UPDATE ai_configs SET is_active = false WHERE is_active")
     return await db.fetchval(
         """
-        INSERT INTO ai_configs (chat_model_id, chat_prompt_id, analyzer_model_id, analyzer_prompt_id)
-        VALUES ($1, $2, $3, $4) RETURNING ai_config_id
+        INSERT INTO ai_configs (chat_model_id, chat_prompt_id, analyzer_model_id, analyzer_prompt_id, is_active)
+        VALUES ($1, $2, $3, $4, true) RETURNING ai_config_id
         """,
         chat_model,
         chat_prompt,
@@ -478,3 +479,30 @@ async def test_sticker_rows_reach_analyser_as_notes(client, db, ai_config, analy
     [report] = await reports_of(db, session_id)
     assert report["desc"] == "ขยะล้นถังหน้าตลาด"
     assert await status_of(db, session_id) == "analysed"
+
+
+# --- #242 เลือกบน DB ได้ว่าจะใช้ ai_configs แถวไหน — spec ใน #242 · แบบ docs/designs/09-modules/242-select-ai-config.puml ---
+
+
+async def test_analyser_uses_the_active_config_not_the_newest_row(client, db, ai_config, analyser_ai):
+    """242-4. แถวที่ใช้ไม่ใช่แถวล่าสุด → ใบถูกวิเคราะห์ → ตัววิเคราะห์ได้ prompt และ model ของแถวที่ใช้ · reports บันทึกแถวที่ใช้"""
+    newer_model = await db.fetchval("INSERT INTO models (provider, name) VALUES ('test', 'newer-model') RETURNING model_id")
+    newer_prompt = await db.fetchval("INSERT INTO prompts (prompt) VALUES ('newer prompt') RETURNING prompt_id")
+    await db.execute(
+        """
+        INSERT INTO ai_configs (chat_model_id, chat_prompt_id, analyzer_model_id, analyzer_prompt_id)
+        VALUES ($1, $2, $1, $2)
+        """,
+        newer_model,
+        newer_prompt,
+    )
+    session_id, _ = await closed_session(db, ("user", "text", "น้ำท่วมหน้าบ้าน"))
+    analyser_ai.replies = [answer({"desc": "น้ำท่วมหน้าบ้าน", "tags": ["น้ำท่วม"], "location": None, "images": []})]
+
+    await run_analyse(session_id)
+
+    [(model, messages, _)] = analyser_ai.calls
+    assert model == ANALYSER_MODEL
+    assert messages[0].content == ANALYSER_PROMPT
+    [report] = await reports_of(db, session_id)
+    assert report["ai_config_id"] == ai_config

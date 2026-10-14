@@ -1,0 +1,64 @@
+@startuml 242-select-ai-config
+' เลือกบน DB ได้ว่าจะใช้ ai_configs แถวไหน — #242 · ต้องมีก่อนเพดาน token ต่อคน (#239) ซึ่งเก็บค่าไว้ใน ai_configs
+' ต่อจาก H8: เดิมใช้แถวล่าสุดเสมอ ถอยกลับไปชุดเก่าไม่ได้ · ทางที่คุยไว้ใน H8: activated_at · is_active · ตาราง settings
+' Idea เลือก (2026-10-14): ชี้ไปที่แถวที่มีอยู่แล้ว ด้วยคอลัมน์ is_active บนแถว
+' ลองบนฐาน test แล้ว (2026-10-14): unique index แบบมีเงื่อนไขกันแถวที่สองได้
+'   แต่สลับด้วยคำสั่งเดียว UPDATE ... SET is_active = (ai_config_id = X) พังได้ตามลำดับแถว (UniqueViolationError)
+'   → สลับด้วยสองคำสั่งใน transaction เดียว ปลดแถวเดิมก่อน แล้วตั้งแถวใหม่
+' กล่อง = ไฟล์ · ลูกศร = ใครเรียกใคร
+skinparam defaultFontName "Thonburi"
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+hide footbox
+autonumber
+
+title ~#242 — เลือกบน DB ได้ว่าจะใช้ ai_configs แถวไหน
+
+actor "แอดมิน" as ADMIN
+participant "main.py" as MAIN
+participant "workers/worker.py" as W
+box "services/" #EEF4FF
+  participant "prompt.py" as PROMPT
+end box
+box "clients/" #FFF4E8
+  participant "database.py" as DB
+end box
+database "PSQL\nai_configs" as PSQL
+
+note over PSQL
+  <b>is_active</b> boolean ไม่เป็น null · ค่าตั้งต้น false
+  unique index ที่นับเฉพาะแถวที่ is_active = true
+  → ฐานข้อมูลไม่ยอมให้มีแถวที่ใช้อยู่เกินหนึ่งแถว
+end note
+
+== เปิดแอป ==
+MAIN -> PROMPT : ensure_default_config()
+PROMPT -> DB : has_active_ai_config()
+DB -> PSQL : มีแถวที่ is_active = true ไหม
+alt มีแล้ว
+  PROMPT --> MAIN : ไม่ทำอะไร (เปิดแอปซ้ำไม่เพิ่มแถว)
+else ยังไม่มี — ฐานใหม่ หรือฐานที่มีแถวแต่ยังไม่ได้เลือก
+  PROMPT -> DB : insert_active_ai_config(ค่าจาก default_config)
+  DB -> PSQL : transaction เดียว\nmodels 2 แถว · prompts 2 แถว\nai_configs 1 แถวผูกทั้งสี่ is_active = true
+end
+
+== ทุกงานคุยและงานวิเคราะห์ ==
+W -> PROMPT : active_config()
+PROMPT -> DB : select_active_ai_config()
+DB -> PSQL : แถวที่ is_active = true
+DB --> W : AiConfig
+
+== แอดมินเลือกแถวอื่น (SQL ด้วยมือ ไม่ผ่านแอป) ==
+ADMIN -> PSQL : BEGIN\nUPDATE ai_configs SET is_active = false WHERE is_active\nUPDATE ai_configs SET is_active = true WHERE ai_config_id = 'แถวที่เลือก'\nCOMMIT
+note right of ADMIN
+  งานคุยรอบถัดไปใช้แถวใหม่ทันที ไม่ต้องเปิดแอปใหม่
+  กลับไปใช้ชุดเก่า = ชี้กลับไปที่แถวเก่า ไม่ต้องคัดลอก
+  ชุดใหม่ = insert แถวใหม่ (is_active ค่าตั้งต้น false) แล้วสลับแบบเดียวกัน
+end note
+
+note over MAIN, PSQL #F0F0F0
+  ai_calls และ reports เก็บ ai_config_id ของแถวที่ใช้ตอนนั้นอยู่แล้ว — ย้อนดูได้ว่าแต่ละครั้งใช้ชุดไหน
+  ฐานที่มีอยู่ก่อน #242 ต้องเพิ่มคอลัมน์เอง แล้วเลือกแถวหนึ่งแถว
+  ถ้าไม่เลือก ตอนเปิดแอปจะได้แถวค่าตั้งต้นใหม่เป็นแถวที่ใช้
+end note
+@enduml

@@ -4,12 +4,13 @@ from pydantic import BaseModel
 
 
 class AiConfig(BaseModel):
-    """ai_configs แถวที่ใช้ (is_active) — ชุด model + prompt ของตัวคุยและตัววิเคราะห์"""
+    """ai_configs แถวที่ใช้ (is_active) — ชุด model + prompt ของตัวคุยและตัววิเคราะห์ + เพดาน token ต่อผู้แจ้งต่อวัน"""
     ai_config_id: UUID
     chat_model_id: UUID
     chat_prompt_id: UUID
     analyzer_model_id: UUID
     analyzer_prompt_id: UUID
+    user_daily_token_limit: int
 
 
 class AiModel(BaseModel):

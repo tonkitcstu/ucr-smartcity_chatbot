@@ -32,3 +32,20 @@ async def test_only_one_ai_config_can_be_active(db):
 
     with pytest.raises(asyncpg.UniqueViolationError):
         await db.execute(insert_active, model_id, prompt_id)
+
+
+async def test_user_daily_token_limit_defaults_to_two_million(db):
+    """239-8. insert แถว ai_configs โดยไม่ใส่เพดาน → user_daily_token_limit = 2,000,000 · #239"""
+    model_id = await db.fetchval("INSERT INTO models (provider, name) VALUES ('test', 'test-model') RETURNING model_id")
+    prompt_id = await db.fetchval("INSERT INTO prompts (prompt) VALUES ('test prompt') RETURNING prompt_id")
+
+    limit = await db.fetchval(
+        """
+        INSERT INTO ai_configs (chat_model_id, chat_prompt_id, analyzer_model_id, analyzer_prompt_id)
+        VALUES ($1, $2, $1, $2) RETURNING user_daily_token_limit
+        """,
+        model_id,
+        prompt_id,
+    )
+
+    assert limit == 2_000_000

@@ -89,6 +89,7 @@ entity ai_configs {
   * chat_prompt_id : uuid <<FK>>
   * analyzer_model_id : uuid <<FK>>
   * analyzer_prompt_id : uuid <<FK>>
+  * is_active : boolean <<true ได้แถวเดียว>>
   * created_at : timestamptz
 }
 

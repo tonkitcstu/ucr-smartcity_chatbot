@@ -1,0 +1,76 @@
+@startuml 239-user-token-limit
+' เพดาน token ต่อผู้แจ้งต่อวัน — #239 เคส ① (เพดานของระบบต่อคน) · เคส ② buffer ต่อคน และ ③ AI ทั้งระบบ ยังไม่ทำ
+' กันคนเดียวใช้งบ AI ของทุกคนจนหมด — T10 (ค่าใช้จ่าย AI ไม่พุ่งเกินเพดาน แม้มีคนส่งข้อความรัว ๆ หรือก่อกวน)
+' Idea ตัดสิน (2026-10-14):
+'   นับ token ไม่นับข้อความ — ของจริงใช้ key แบบเสียเงิน คิดเงินตาม token · บอทรวมข้อความที่ส่งติดกันเป็นรอบเดียวอยู่แล้ว
+'   เพดานเก็บใน ai_configs แบบเดียวกับ prompt (#242) ไม่ใช่ .env · ค่าแรก 2,000,000 token (ราว 20 บทสนทนา)
+'   นับเป็นวัน · เกินเพดานแล้วตอบข้อความแข็ง (TC7 ข้อยกเว้น 1 — ข้อความสำรองตอนโควตาหมด)
+'   ไม่มี state ใหม่ — ยอดใน ai_calls คือสถานะ · state ของใบอยู่กับใบ แต่เพดานอยู่กับคน
+' ตัวเลข token ต่อบทสนทนาประเมินจากระบบเก่า — วัดจริงใน #241
+' กล่อง = ไฟล์ · ลูกศร = ใครเรียกใคร
+skinparam defaultFontName "Thonburi"
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+hide footbox
+autonumber
+
+title ~#239 ① — เพดาน token ต่อผู้แจ้งต่อวัน
+
+actor "LINE\n(ผู้แจ้ง)" as LINE
+participant "controllers/line.py" as CTRL
+box "services/" #EEF4FF
+  participant "session.py" as S
+  participant "quota.py" as Q
+  participant "job.py" as J
+end box
+box "clients/" #FFF4E8
+  participant "database.py" as DB
+  participant "line\n(LINE API)" as CL
+end box
+
+LINE -> CTRL : ข้อความ (ยอมรับ PDPA แล้ว)
+CTRL -> S : open_for(user) · save_message(...)
+note right of S #F0F0F0
+  เปิดใบและบันทึกข้อความลง PSQL เสมอ ไม่ว่าเกินเพดานหรือไม่
+  S30 — ข้อความไม่หาย · ตัววิเคราะห์อ่านบทสนทนาจาก PSQL จึงเห็นข้อความนี้ตอนทำรายงาน
+end note
+
+CTRL -> Q : is_over_daily_limit(user)
+Q -> DB : select_active_ai_config()
+DB --> Q : user_daily_token_limit
+Q -> DB : sum_user_tokens_today(user_id)
+note right of DB
+  <b>sum_user_tokens_today</b>
+  input_tokens + output_tokens ของ ai_calls
+  ในทุกใบของผู้แจ้งคนนี้ · ตัวคุยและตัววิเคราะห์
+  นับเฉพาะวันนี้ตามเวลาไทย · ข้ามเที่ยงคืนยอดเริ่มที่ศูนย์
+  แถวที่ไม่มีจำนวน token นับเป็นศูนย์
+end note
+DB --> Q : ยอด token ของวันนี้
+Q --> CTRL : ยอด >= เพดาน
+
+alt เกินเพดาน
+  CTRL -> Q : limit_reached_message()
+  CTRL -> CL : reply(reply token ของข้อความนี้, [ข้อความแข็ง])
+  CL --> LINE : "วันนี้คุยกันครบโควตาแล้วค่ะ ..."
+  note over CTRL, J
+    จบตรงนี้ — ไม่ต่อ buffer · ไม่แตะ state (ใบคง IDLE) · ไม่ใส่ใบสั่งงาน
+    ใบไม่ค้าง · sweeper ปิดใบได้ตามปกติเมื่อเงียบครบเวลา
+  end note
+else ยังไม่เกิน
+  CTRL -> S : buffer(message) · start_buffering(...)
+  CTRL -> J : enqueue_chat (เมื่อเพิ่งเปลี่ยนจาก IDLE)
+  note right of J #F0F0F0
+    worker คุยตามเดิม
+    communicator บันทึก ai_calls พร้อมจำนวน token ทุกรอบ
+    ยอดที่ quota อ่านจึงเพิ่มขึ้นเองหลังจบแต่ละรอบ
+  end note
+end
+
+note over LINE, CL #F0F0F0
+  รู้จำนวน token หลังเรียก AI เสร็จเท่านั้น — รอบสุดท้ายก่อนชนเพดานใช้เกินเพดานได้หนึ่งรอบ
+  ตรวจทุกข้อความ ไม่ว่าใบเป็น state ไหน — ข้อความที่เกินเพดานระหว่างใบกำลังคุย ได้ข้อความแข็งด้วย reply token ของตัวเอง
+    ไม่เข้า buffer จึงไม่แย่ง reply token ที่รอบคุยนั้นใช้ตอบ
+  เปลี่ยนเพดาน = เพิ่มแถว ai_configs แล้วเลือกแถวนั้น (#242)
+end note
+@enduml

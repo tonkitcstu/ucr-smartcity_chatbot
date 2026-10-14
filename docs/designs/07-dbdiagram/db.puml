@@ -90,6 +90,7 @@ entity ai_configs {
   * analyzer_model_id : uuid <<FK>>
   * analyzer_prompt_id : uuid <<FK>>
   * is_active : boolean <<true ได้แถวเดียว>>
+  * user_daily_token_limit : bigint
   * created_at : timestamptz
 }
 

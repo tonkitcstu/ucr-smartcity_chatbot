@@ -4,7 +4,7 @@ from pydantic import BaseModel
 
 
 class AiConfig(BaseModel):
-    """ai_configs — ชุด model + prompt ของตัวคุยและตัววิเคราะห์"""
+    """ai_configs แถวที่ใช้ (is_active) — ชุด model + prompt ของตัวคุยและตัววิเคราะห์"""
     ai_config_id: UUID
     chat_model_id: UUID
     chat_prompt_id: UUID

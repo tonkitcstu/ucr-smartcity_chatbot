@@ -21,10 +21,10 @@ def sticker_note(keywords: str | None) -> str:
 
 
 async def ensure_default_config() -> None:
-    """PSQL เป็นตัวจริง · หา ai_configs ไม่เจอ (ฐานใหม่) → ใส่ค่าจาก default_config"""
-    if await database.has_ai_config():
+    """PSQL เป็นตัวจริง · ไม่มีแถวที่ถูกเลือก (ฐานใหม่ หรือมีแถวแต่ยังไม่ได้เลือก) → ใส่ค่าจาก default_config เป็นแถวที่ใช้"""
+    if await database.has_active_ai_config():
         return
-    await database.insert_ai_config(
+    await database.insert_active_ai_config(
         default_config.PROVIDER,
         default_config.CHAT_MODEL,
         default_config.CHAT_PROMPT,
@@ -33,9 +33,9 @@ async def ensure_default_config() -> None:
     )
 
 
-async def latest_config() -> AiConfig:
-    """ai_configs แถวล่าสุด"""
-    return await database.select_latest_ai_config()
+async def active_config() -> AiConfig:
+    """ai_configs แถวที่แอดมินเลือก (is_active) — อ่านใหม่ทุกงาน สลับแถวแล้วมีผลงานถัดไปทันที"""
+    return await database.select_active_ai_config()
 
 
 def buffer_to_context(buffer: list[Message], attachments: list[Attachment]) -> list[ContextMessage]:

@@ -60,6 +60,8 @@ CREATE TABLE ai_configs (
     analyzer_model_id  uuid NOT NULL REFERENCES models (model_id),
     analyzer_prompt_id uuid NOT NULL REFERENCES prompts (prompt_id),
     is_active          boolean NOT NULL DEFAULT false,
+    -- เพดาน token (input + output) ที่ผู้แจ้งหนึ่งคนใช้ได้ต่อวันตามเวลาไทย · รวมตัวคุยและตัววิเคราะห์ (#239)
+    user_daily_token_limit bigint NOT NULL DEFAULT 2000000,
     created_at         timestamptz NOT NULL DEFAULT now()
 );
 

@@ -12,7 +12,7 @@ from linebot.v3.webhooks import (
 
 from app.clients import line
 from app.models.line import IncomingMessage
-from app.services import job, pdpa, session, user
+from app.services import job, pdpa, quota, session, user
 
 async def handle_webhook(body: str, signature: str) -> None:
     """ลายเซ็นไม่ผ่าน → InvalidSignatureError · event ชนิดอื่นข้าม"""
@@ -39,6 +39,7 @@ async def on_postback(event: PostbackEvent) -> None:
 async def on_message(event: MessageEvent) -> None:
     """ยังไม่ยอมรับ → ส่งการ์ดอีกครั้ง ไม่เก็บข้อความ ไม่ส่ง AI (LC1)
     ยอมรับแล้ว → บันทึก ต่อ buffer · IDLE → BUFFERING ได้ → ใส่ใบสั่งงานคุย · ไม่ reply (worker ตอบ)
+    ใช้ token วันนี้ถึงเพดานแล้ว (#239) → บันทึก แล้ว reply ข้อความแข็ง · ไม่ต่อ buffer ไม่แตะ state ไม่ใส่ใบสั่งงาน
     """
     found = await user.find_by_line_id(event.source.user_id)
     if found is None:
@@ -51,6 +52,10 @@ async def on_message(event: MessageEvent) -> None:
 
     current = await session.open_for(found)
     message = await session.save_message(current, incoming)
+    if await quota.is_over_daily_limit(found):
+        await line.reply(event.reply_token, [quota.limit_reached_message()])
+        return
+
     await session.buffer(message)
     if await session.start_buffering(current):
         await job.enqueue_chat(current)

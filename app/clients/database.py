@@ -98,6 +98,19 @@ async def select_line_user_id(session_id: UUID) -> str:
     )
 
 
+async def sum_user_tokens_today(user_id: UUID) -> int:
+    """token (input + output) ของ ai_calls ทุกใบของผู้แจ้งคนนี้ ตัวคุยและตัววิเคราะห์ · วันนี้ตามเวลาไทย · แถวที่ไม่มีจำนวนนับเป็น 0"""
+    return await pool.fetchval(
+        """
+        SELECT coalesce(sum(coalesce(c.input_tokens, 0) + coalesce(c.output_tokens, 0)), 0)
+        FROM ai_calls c JOIN sessions s USING (session_id)
+        WHERE s.user_id = $1
+          AND (c.created_at AT TIME ZONE 'Asia/Bangkok')::date = (now() AT TIME ZONE 'Asia/Bangkok')::date
+        """,
+        user_id,
+    )
+
+
 async def insert_attachment(message_id: UUID, file_path: str) -> Attachment:
     row = await pool.fetchrow(
         """
@@ -114,7 +127,8 @@ async def select_active_ai_config() -> AiConfig:
     """แถวที่ is_active = true — schema กันไว้ให้มีได้แถวเดียว"""
     row = await pool.fetchrow(
         """
-        SELECT ai_config_id, chat_model_id, chat_prompt_id, analyzer_model_id, analyzer_prompt_id
+        SELECT ai_config_id, chat_model_id, chat_prompt_id, analyzer_model_id, analyzer_prompt_id,
+               user_daily_token_limit
         FROM ai_configs WHERE is_active
         """
     )

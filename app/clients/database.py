@@ -110,11 +110,12 @@ async def insert_attachment(message_id: UUID, file_path: str) -> Attachment:
     return Attachment(**row)
 
 
-async def select_latest_ai_config() -> AiConfig:
+async def select_active_ai_config() -> AiConfig:
+    """แถวที่ is_active = true — schema กันไว้ให้มีได้แถวเดียว"""
     row = await pool.fetchrow(
         """
         SELECT ai_config_id, chat_model_id, chat_prompt_id, analyzer_model_id, analyzer_prompt_id
-        FROM ai_configs ORDER BY created_at DESC LIMIT 1
+        FROM ai_configs WHERE is_active
         """
     )
     return AiConfig(**row)
@@ -244,21 +245,22 @@ async def mark_analysed(session_id: UUID) -> None:
     await pool.execute("UPDATE sessions SET status = 'analysed' WHERE session_id = $1", session_id)
 
 
-async def has_ai_config() -> bool:
-    return await pool.fetchval("SELECT EXISTS (SELECT 1 FROM ai_configs)")
+async def has_active_ai_config() -> bool:
+    """มีแถวที่ถูกเลือกไหม — มีแถวแต่ไม่มีแถวไหนถูกเลือก นับเป็นไม่มี"""
+    return await pool.fetchval("SELECT EXISTS (SELECT 1 FROM ai_configs WHERE is_active)")
 
 
-async def insert_ai_config(
+async def insert_active_ai_config(
     provider: str, chat_model: str, chat_prompt: str, analyser_model: str, analyser_prompt: str
 ) -> None:
-    """transaction เดียว: models 2 แถว · prompts 2 แถว · ai_configs 1 แถวผูกทั้งสี่"""
+    """transaction เดียว: models 2 แถว · prompts 2 แถว · ai_configs 1 แถวผูกทั้งสี่ เป็นแถวที่ใช้ทันที"""
     async with pool.acquire() as conn, conn.transaction():
         insert_model = "INSERT INTO models (provider, name) VALUES ($1, $2) RETURNING model_id"
         insert_prompt = "INSERT INTO prompts (prompt) VALUES ($1) RETURNING prompt_id"
         await conn.execute(
             """
-            INSERT INTO ai_configs (chat_model_id, chat_prompt_id, analyzer_model_id, analyzer_prompt_id)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO ai_configs (chat_model_id, chat_prompt_id, analyzer_model_id, analyzer_prompt_id, is_active)
+            VALUES ($1, $2, $3, $4, true)
             """,
             await conn.fetchval(insert_model, provider, chat_model),
             await conn.fetchval(insert_prompt, chat_prompt),

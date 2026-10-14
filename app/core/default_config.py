@@ -1,5 +1,5 @@
-"""model + prompt ตั้งต้นของตัวคุยและตัววิเคราะห์ — ใช้เมื่อหา ai_configs ใน PSQL ไม่เจอเท่านั้น
-(prompt.ensure_default_config ตอนเปิดแอป) · ฐานมีแถวแล้ว PSQL เป็นตัวจริง แก้ไฟล์นี้ไม่เปลี่ยนฐาน"""
+"""model + prompt ตั้งต้นของตัวคุยและตัววิเคราะห์ — ใช้เมื่อ ai_configs ใน PSQL ไม่มีแถวที่ถูกเลือกเท่านั้น
+(prompt.ensure_default_config ตอนเปิดแอป) · มีแถวที่ถูกเลือกแล้ว PSQL เป็นตัวจริง แก้ไฟล์นี้ไม่เปลี่ยนฐาน"""
 
 PROVIDER = "gemini"
 CHAT_MODEL = "gemini-3.5-flash-lite"

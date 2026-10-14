@@ -59,8 +59,14 @@ CREATE TABLE ai_configs (
     chat_prompt_id     uuid NOT NULL REFERENCES prompts (prompt_id),
     analyzer_model_id  uuid NOT NULL REFERENCES models (model_id),
     analyzer_prompt_id uuid NOT NULL REFERENCES prompts (prompt_id),
+    is_active          boolean NOT NULL DEFAULT false,
     created_at         timestamptz NOT NULL DEFAULT now()
 );
+
+-- ตัวคุยและตัววิเคราะห์ใช้แถวที่ is_active = true ได้แถวเดียว (#242)
+-- แอดมินสลับแถว: ปลดแถวเดิมก่อน แล้วตั้งแถวใหม่ ในสองคำสั่งของ transaction เดียว
+--   คำสั่งเดียว SET is_active = (ai_config_id = ...) ชน index นี้ได้ ขึ้นกับลำดับแถว
+CREATE UNIQUE INDEX ai_configs_one_active ON ai_configs (is_active) WHERE is_active;
 
 CREATE TABLE reports (
     report_id    uuid PRIMARY KEY DEFAULT gen_random_uuid(),

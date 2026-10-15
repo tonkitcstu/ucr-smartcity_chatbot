@@ -1,0 +1,33 @@
+@startuml 245-state-service
+' รวมการเปลี่ยน state ของใบไว้ที่ services/state.py — #245 · ต้องมีก่อน #239 จุด ② ซึ่งเพิ่ม SUSPENDED
+' ย้ายอย่างเดียว พฤติกรรมไม่เปลี่ยน · key session:{id}:state และ clients/redis.py ไม่เปลี่ยน
+' service ไม่ import service อื่น → session.finish เลิกลบ state เอง · worker เรียก state.finish_processing เป็นบรรทัดแยก
+' กล่อง = state · ลูกศร = ฟังก์ชันใน state.py · บรรทัดใต้ชื่อฟังก์ชัน = ใครเรียก
+skinparam defaultFontName "Thonburi"
+skinparam shadowing false
+
+title ~#245 — state ของใบ: รวมการเปลี่ยนไว้ที่ services/state.py
+
+state IDLE : ไม่มี key ใน Redis
+state BUFFERING : รอผู้แจ้งเงียบครบ 3 วินาที
+state PROCESSING : worker เรียก AI แล้วตอบ
+state CLOSING : ตัวกวาดกำลังปิดใบ
+
+[*] --> IDLE : ใบเปิดใหม่
+IDLE --> BUFFERING : <b>start_buffering(session) -> bool</b>\ncontrollers/line.py · workers/sweeper.py\nสำเร็จเฉพาะตอนไม่มี key
+BUFFERING --> PROCESSING : <b>start_processing(session_id)</b>\nworkers/worker.py
+PROCESSING --> IDLE : <b>finish_processing(session_id)</b>\nworkers/worker.py หลัง session.finish
+IDLE --> CLOSING : <b>start_closing(session) -> bool</b>\nworkers/sweeper.py\nสำเร็จเฉพาะตอนไม่มี key
+CLOSING --> IDLE : <b>stop_closing(session)</b>\nworkers/sweeper.py\nปิดไม่สำเร็จเพราะมีข้อความใหม่
+CLOSING --> [*] : session.close()\nปิดใบสำเร็จ · ลบทุก key ของใบ\n(อยู่ใน session.py เหมือนเดิม)
+
+legend right
+  <b>ย้ายจากไหนไปไหน</b>
+  |= เดิม |= ใหม่ |
+  | session.start_buffering | state.start_buffering |
+  | session.start_processing | state.start_processing |
+  | บรรทัดท้ายของ session.finish | state.finish_processing |
+  | session.start_closing | state.start_closing |
+  | session.stop_closing | state.stop_closing |
+endlegend
+@enduml

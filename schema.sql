@@ -34,7 +34,8 @@ CREATE TABLE messages (
     content         text,
     lat             double precision,
     lng             double precision,
-    status          text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'answered')),
+    -- skipped = ส่งรัวจนใบถูกพัก · ไม่ส่งให้ AI และตัววิเคราะห์ข้าม แต่แดชบอร์ดยังเห็น (#239)
+    status          text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'answered', 'skipped')),
     created_at      timestamptz NOT NULL DEFAULT now()
 );
 
@@ -62,6 +63,8 @@ CREATE TABLE ai_configs (
     is_active          boolean NOT NULL DEFAULT false,
     -- เพดาน token (input + output) ที่ผู้แจ้งหนึ่งคนใช้ได้ต่อวันตามเวลาไทย · รวมตัวคุยและตัววิเคราะห์ (#239)
     user_daily_token_limit bigint NOT NULL DEFAULT 2000000,
+    -- เพดานข้อความที่บอทยังไม่ได้ตอบใน buffer ของใบหนึ่ง · ข้อความที่เกินพักใบ 24 ชั่วโมง (#239)
+    session_buffer_limit integer NOT NULL DEFAULT 30,
     created_at         timestamptz NOT NULL DEFAULT now()
 );
 

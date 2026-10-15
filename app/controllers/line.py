@@ -39,7 +39,9 @@ async def on_postback(event: PostbackEvent) -> None:
 async def on_message(event: MessageEvent) -> None:
     """ยังไม่ยอมรับ → ส่งการ์ดอีกครั้ง ไม่เก็บข้อความ ไม่ส่ง AI (LC1)
     ยอมรับแล้ว → บันทึก ต่อ buffer · IDLE → BUFFERING ได้ → ใส่ใบสั่งงานคุย · ไม่ reply (worker ตอบ)
-    ใช้ token วันนี้ถึงเพดานแล้ว (#239) → บันทึก แล้ว reply ข้อความแข็ง · ไม่ต่อ buffer ไม่แตะ state ไม่ใส่ใบสั่งงาน
+    ใบถูกพักอยู่ (#239 ②) → บันทึกเป็น skipped แล้ว reply ข้อความแข็ง · เช็คก่อนเพดานอื่น
+    ใช้ token วันนี้ถึงเพดานแล้ว (#239 ①) → บันทึก แล้ว reply ข้อความแข็ง · ไม่ต่อ buffer ไม่แตะ state ไม่ใส่ใบสั่งงาน
+    buffer ของใบครบเพดานแล้ว (#239 ②) → ข้อความที่ค้างและข้อความนี้เป็น skipped · ล้าง buffer · พักใบ · reply ข้อความแข็ง
     """
     found = await user.find_by_line_id(event.source.user_id)
     if found is None:
@@ -52,8 +54,17 @@ async def on_message(event: MessageEvent) -> None:
 
     current = await session.open_for(found)
     message = await session.save_message(current, incoming)
+    if await state.is_suspended(current):
+        await session.skip(current, message)
+        await line.reply(event.reply_token, [quota.suspended_message()])
+        return
     if await quota.is_over_daily_limit(found):
         await line.reply(event.reply_token, [quota.limit_reached_message()])
+        return
+    if await quota.is_buffer_full(current):
+        await session.skip(current, message)
+        await state.suspend(current)
+        await line.reply(event.reply_token, [quota.suspended_message()])
         return
 
     await session.buffer(message)

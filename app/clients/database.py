@@ -128,7 +128,7 @@ async def select_active_ai_config() -> AiConfig:
     row = await pool.fetchrow(
         """
         SELECT ai_config_id, chat_model_id, chat_prompt_id, analyzer_model_id, analyzer_prompt_id,
-               user_daily_token_limit
+               user_daily_token_limit, session_buffer_limit
         FROM ai_configs WHERE is_active
         """
     )
@@ -189,6 +189,10 @@ async def mark_answered(message_ids: list[UUID]) -> None:
     await pool.execute("UPDATE messages SET status = 'answered' WHERE message_id = ANY($1::uuid[])", message_ids)
 
 
+async def mark_skipped(message_ids: list[UUID]) -> None:
+    await pool.execute("UPDATE messages SET status = 'skipped' WHERE message_id = ANY($1::uuid[])", message_ids)
+
+
 async def select_silent_sessions(minutes: int) -> list[Session]:
     """ใบ open ที่ไม่มีข้อความเข้ามาเกิน minutes นาที"""
     rows = await pool.fetch(
@@ -220,7 +224,7 @@ async def select_transcript(session_id: UUID) -> list[TranscriptMessage]:
     """ข้อความทั้งใบ เรียงตามเวลา · รูปพ่วง attachment"""
     rows = await pool.fetch(
         """
-        SELECT m.message_id, m.role, m.type, m.content, m.lat, m.lng, a.attachment_id, a.file_path
+        SELECT m.message_id, m.role, m.type, m.content, m.lat, m.lng, m.status, a.attachment_id, a.file_path
         FROM messages m LEFT JOIN attachments a USING (message_id)
         WHERE m.session_id = $1
         ORDER BY m.created_at

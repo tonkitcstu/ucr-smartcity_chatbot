@@ -229,17 +229,16 @@ async def test_tokens_of_another_reporter_are_not_counted(client, db, redis, rep
     assert replies == []
 
 
-async def test_analyser_tokens_count_too(client, db, redis, replies, daily_limit):
-    """239-5. token ของตัวคุยยังไม่ถึง แต่รวมตัววิเคราะห์แล้วถึงเพดาน → นับรวม — ข้อความแข็ง"""
+async def test_analyser_tokens_are_not_counted(client, db, redis, replies, daily_limit):
+    """239-5. token ของตัวคุยยังไม่ถึง แต่รวมตัววิเคราะห์แล้วถึงเพดาน → ไม่นับตัววิเคราะห์ — ทางเดิม · แก้ตาม #239 ③"""
     await accept_pdpa(client)
     await spend(db, "U_a", 40, 10, kind="communicator")
     await spend(db, "U_a", 45, 5, kind="analyser")
 
     await post_webhook(client, text_event("น้ำท่วมอีกแล้ว", user_id="U_a", reply_token="rt-1", event_id="ev-1"))
 
-    [(_, messages)] = replies
-    assert [message.text for message in messages] == fixed_reply_texts()
-    assert await jobs(redis) == []
+    assert len(await jobs(redis)) == 1
+    assert replies == []
 
 
 async def test_limit_comes_from_the_chosen_config(client, db, redis, replies, daily_limit):
@@ -443,3 +442,97 @@ async def test_after_suspension_expires_the_session_goes_the_usual_way(client, d
     assert await jobs(redis) == [{"kind": "chat", "session_id": session_id}]
     assert replies == []
     assert await statuses(db) == ["skipped"] * 4 + ["pending"]
+
+
+# --- #239 ③ เพดาน token ของตัวคุยทั้งระบบต่อวัน — T10 S30 · spec ใน #239 · แบบ docs/designs/09-modules/239-system-token-limit.puml ---
+
+SYSTEM_LIMIT = 100
+
+
+async def add_config_with_system_limit(db, system_limit):
+    """ai_configs แถวใหม่ — model และ prompt เหมือนแถวที่ใช้อยู่ · เพดาน token ทั้งระบบต่อวันตามที่ให้ · ยังไม่ถูกเลือก"""
+    return await db.fetchval(
+        """
+        INSERT INTO ai_configs
+            (chat_model_id, chat_prompt_id, analyzer_model_id, analyzer_prompt_id, system_daily_token_limit)
+        SELECT chat_model_id, chat_prompt_id, analyzer_model_id, analyzer_prompt_id, $1
+        FROM ai_configs WHERE is_active
+        RETURNING ai_config_id
+        """,
+        system_limit,
+    )
+
+
+@pytest.fixture
+async def system_limit(client, db):
+    """เลือกแถวที่เพดานทั้งระบบ = SYSTEM_LIMIT · จบ test คืนแถวที่เลือกเดิม (ai_configs ไม่ถูกล้างระหว่าง test)"""
+    before = await db.fetchval("SELECT ai_config_id FROM ai_configs WHERE is_active")
+    limited = await add_config_with_system_limit(db, SYSTEM_LIMIT)
+    await choose(db, limited)
+    yield limited
+    await choose(db, before)
+
+
+async def accept_pdpa_for_another_reporter(client):
+    await post_webhook(client, postback_event("pdpa_accept", user_id="U_b", event_id="ev-accept-b"))
+
+
+async def test_under_system_token_limit_goes_the_usual_way(client, db, redis, replies, system_limit):
+    """239③-1. ผู้แจ้งสองคนใช้ token ของตัวคุยรวมกันต่ำกว่าเพดานทั้งระบบ → ทางเดิม: buffer · งานคุย 1 งาน"""
+    await accept_pdpa(client)
+    await accept_pdpa_for_another_reporter(client)
+    await spend(db, "U_a", 30, 19)
+    await spend(db, "U_b", 40, 10)
+
+    await post_webhook(client, text_event("น้ำท่วมหน้าบ้าน", user_id="U_a", reply_token="rt-1", event_id="ev-1"))
+
+    [session] = await open_sessions(db)
+    session_id = str(session["session_id"])
+    assert [item["content"] for item in await buffer_of(redis, session_id)] == ["น้ำท่วมหน้าบ้าน"]
+    assert await jobs(redis) == [{"kind": "chat", "session_id": session_id}]
+    assert replies == []
+
+
+async def test_reaching_system_token_limit_gets_the_fixed_reply(client, db, redis, replies, system_limit):
+    """239③-2. คนอื่นใช้ token ของตัวคุยรวมกันถึงเพดานทั้งระบบ ผู้แจ้งคนนี้ยังไม่ใช้เลย → บันทึกข้อความ
+    reply ข้อความแข็งเดิมด้วย token ของข้อความนี้ · buffer ว่าง · ไม่มี state · ไม่มีงานคุย"""
+    await accept_pdpa(client)
+    await accept_pdpa_for_another_reporter(client)
+    await spend(db, "U_b", 60, 40)
+
+    await post_webhook(client, text_event("น้ำท่วมหน้าบ้าน", user_id="U_a", reply_token="rt-1", event_id="ev-1"))
+
+    [session] = await open_sessions(db)
+    session_id = str(session["session_id"])
+    assert await db.fetchval("SELECT content FROM messages WHERE line_event_id = 'ev-1'") == "น้ำท่วมหน้าบ้าน"
+    [(reply_token, messages)] = replies
+    assert reply_token == "rt-1"
+    assert [message.text for message in messages] == fixed_reply_texts()
+    assert await buffer_of(redis, session_id) == []
+    assert await state_of(redis, session_id) is None
+    assert await jobs(redis) == []
+
+
+async def test_analyser_tokens_are_not_counted_in_system_limit(client, db, redis, replies, system_limit):
+    """239③-3. token ของตัววิเคราะห์ทำให้ยอดทั้งระบบเกินเพดาน แต่ตัวคุยยังไม่ถึง → ไม่นับตัววิเคราะห์ — ทางเดิม"""
+    await accept_pdpa(client)
+    await accept_pdpa_for_another_reporter(client)
+    await spend(db, "U_b", 40, 10, kind="communicator")
+    await spend(db, "U_b", 400, 100, kind="analyser")
+
+    await post_webhook(client, text_event("น้ำท่วมหน้าบ้าน", user_id="U_a", event_id="ev-1"))
+
+    assert len(await jobs(redis)) == 1
+    assert replies == []
+
+
+async def test_tokens_from_yesterday_are_not_counted_in_system_limit(client, db, redis, replies, system_limit):
+    """239③-4. token ที่ใช้เมื่อวาน (ก่อนเที่ยงคืนเวลาไทย) เกินเพดานทั้งระบบ → ไม่นับ — ทางเดิม"""
+    await accept_pdpa(client)
+    await accept_pdpa_for_another_reporter(client)
+    await spend(db, "U_b", 500, 0, yesterday=True)
+
+    await post_webhook(client, text_event("น้ำท่วมหน้าบ้าน", user_id="U_a", event_id="ev-1"))
+
+    assert len(await jobs(redis)) == 1
+    assert replies == []

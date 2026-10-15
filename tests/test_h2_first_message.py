@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from tests.line_webhook import post_webhook, postback_event, text_event
+from tests.line_webhook import image_event, post_webhook, postback_event, text_event
 
 
 async def accept_pdpa(client, user_id="U_a"):
@@ -275,3 +275,171 @@ async def test_message_while_waiting_for_silence_gets_its_own_fixed_reply(client
     assert [item["content"] for item in await buffer_of(redis, session_id)] == ["น้ำท่วมหน้าบ้าน"]
     assert await state_of(redis, session_id) == "BUFFERING"
     assert await jobs(redis) == [{"kind": "chat", "session_id": session_id}]
+
+
+# --- #239 ② เพดานข้อความใน buffer ต่อใบ — T10 S30 · spec ใน #239 · แบบ docs/designs/09-modules/239-buffer-limit.puml ---
+
+BUFFER_LIMIT = 3
+
+
+async def add_config_with_buffer_limit(db, buffer_limit, token_limit=2_000_000):
+    """ai_configs แถวใหม่ — model และ prompt เหมือนแถวที่ใช้อยู่ · เพดานข้อความใน buffer ต่อใบและเพดาน token ตามที่ให้
+    ยังไม่ถูกเลือก"""
+    return await db.fetchval(
+        """
+        INSERT INTO ai_configs
+            (chat_model_id, chat_prompt_id, analyzer_model_id, analyzer_prompt_id,
+             session_buffer_limit, user_daily_token_limit)
+        SELECT chat_model_id, chat_prompt_id, analyzer_model_id, analyzer_prompt_id, $1, $2
+        FROM ai_configs WHERE is_active
+        RETURNING ai_config_id
+        """,
+        buffer_limit,
+        token_limit,
+    )
+
+
+@pytest.fixture
+async def buffer_limit(client, db):
+    """เลือกแถวที่เพดานข้อความใน buffer = BUFFER_LIMIT · จบ test คืนแถวที่เลือกเดิม (ai_configs ไม่ถูกล้างระหว่าง test)"""
+    before = await db.fetchval("SELECT ai_config_id FROM ai_configs WHERE is_active")
+    limited = await add_config_with_buffer_limit(db, BUFFER_LIMIT)
+    await choose(db, limited)
+    yield limited
+    await choose(db, before)
+
+
+def message(n, text=None):
+    """ข้อความที่ n ของผู้แจ้ง U_a — reply token, event id และ message id ไม่ซ้ำกัน"""
+    return text_event(
+        text or f"ข้อความที่ {n}", user_id="U_a", reply_token=f"rt-{n}", event_id=f"ev-{n}", message_id=f"m-{n}"
+    )
+
+
+async def statuses(db):
+    """สถานะของข้อความผู้แจ้งทุกแถว เรียงตามเวลา"""
+    return [row["status"] for row in await db.fetch("SELECT status FROM messages WHERE role = 'user' ORDER BY created_at")]
+
+
+def suspended_reply_texts():
+    """ถ้อยคำของข้อความแข็งตอนพักใบ — อ่านจากโค้ด ไม่เขียนซ้ำใน test"""
+    from app.services import quota
+
+    return [quota.suspended_message().text]
+
+
+async def test_under_buffer_limit_goes_the_usual_way(client, db, redis, replies, buffer_limit):
+    """239②-1. buffer มี 2 ข้อความ แล้วข้อความที่ 3 เข้ามา → ทางเดิม: buffer 3 ข้อความ · BUFFERING · งานคุย 1 งาน · บอทไม่ reply"""
+    await accept_pdpa(client)
+    for n in range(1, 4):
+        await post_webhook(client, message(n))
+
+    [session] = await open_sessions(db)
+    session_id = str(session["session_id"])
+    assert [item["content"] for item in await buffer_of(redis, session_id)] == [
+        "ข้อความที่ 1",
+        "ข้อความที่ 2",
+        "ข้อความที่ 3",
+    ]
+    assert await state_of(redis, session_id) == "BUFFERING"
+    assert await jobs(redis) == [{"kind": "chat", "session_id": session_id}]
+    assert replies == []
+
+
+async def test_message_over_buffer_limit_suspends_the_session(client, db, redis, replies, buffer_limit):
+    """239②-2. buffer ครบ 3 (ข้อความ รูป ข้อความ) แล้วข้อความที่ 4 เข้ามา → ทั้ง 4 แถวเป็น skipped · buffer ว่าง
+    SUSPENDED หมดอายุภายใน 24 ชั่วโมง · reply ข้อความแข็งด้วย token ของข้อความที่ 4 · งานคุยไม่เพิ่ม"""
+    await accept_pdpa(client)
+    await post_webhook(client, message(1))
+    await post_webhook(client, image_event(user_id="U_a", reply_token="rt-2", event_id="ev-2", message_id="m-2"))
+    await post_webhook(client, message(3))
+
+    await post_webhook(client, message(4))
+
+    [session] = await open_sessions(db)
+    session_id = str(session["session_id"])
+    assert await statuses(db) == ["skipped"] * 4
+    assert await buffer_of(redis, session_id) == []
+    assert await state_of(redis, session_id) == "SUSPENDED"
+    assert 23 * 60 * 60 < await redis.ttl(f"session:{session_id}:state") <= 24 * 60 * 60
+    [(reply_token, messages)] = replies
+    assert reply_token == "rt-4"
+    assert [message.text for message in messages] == suspended_reply_texts()
+    assert await jobs(redis) == [{"kind": "chat", "session_id": session_id}]
+
+
+async def test_message_while_suspended_gets_its_own_fixed_reply(client, db, redis, replies, buffer_limit):
+    """239②-3. ใบเป็น SUSPENDED แล้วข้อความใหม่เข้ามา → บันทึกเป็น skipped · reply ข้อความแข็งด้วย token ของข้อความนี้
+    buffer ว่าง · state ยังเป็น SUSPENDED · งานคุยไม่เพิ่ม"""
+    await accept_pdpa(client)
+    for n in range(1, 5):
+        await post_webhook(client, message(n))
+    replies.clear()
+
+    await post_webhook(client, message(5))
+
+    [session] = await open_sessions(db)
+    session_id = str(session["session_id"])
+    assert await statuses(db) == ["skipped"] * 5
+    [(reply_token, messages)] = replies
+    assert reply_token == "rt-5"
+    assert [message.text for message in messages] == suspended_reply_texts()
+    assert await buffer_of(redis, session_id) == []
+    assert await state_of(redis, session_id) == "SUSPENDED"
+    assert await jobs(redis) == [{"kind": "chat", "session_id": session_id}]
+
+
+async def test_answered_messages_stay_answered_when_suspended(client, db, redis, replies, buffer_limit):
+    """239②-4. ข้อความเก่าในใบบอทตอบแล้ว แล้วส่งรัวจนเกินเพดาน → ข้อความเก่ายังเป็น answered
+    เฉพาะข้อความที่ค้างใน buffer และข้อความนี้เป็น skipped"""
+    await accept_pdpa(client)
+    await post_webhook(client, message(1, "น้ำท่วมหน้าบ้าน"))
+    [session] = await open_sessions(db)
+    session_id = str(session["session_id"])
+    # จำลอง worker ตอบเสร็จ (H4): ข้อความที่ 1 ตอบแล้ว · หยิบงานไปแล้ว · ล้าง buffer · state กลับเป็น IDLE
+    await db.execute("UPDATE messages SET status = 'answered' WHERE line_event_id = 'ev-1'")
+    await redis.delete("jobs", f"session:{session_id}:buffer", f"session:{session_id}:state")
+
+    for n in range(2, 6):
+        await post_webhook(client, message(n))
+
+    assert await statuses(db) == ["answered", "skipped", "skipped", "skipped", "skipped"]
+    assert await state_of(redis, session_id) == "SUSPENDED"
+
+
+async def test_suspension_is_checked_before_daily_token_limit(client, db, redis, replies, buffer_limit):
+    """239②-5. ใบเป็น SUSPENDED และ token วันนี้ถึงเพดานของจุด ① ด้วย → ได้ข้อความแข็งของการพักใบ · ข้อความเป็น skipped"""
+    await choose(db, await add_config_with_buffer_limit(db, BUFFER_LIMIT, token_limit=LIMIT))
+    await accept_pdpa(client)
+    for n in range(1, 5):
+        await post_webhook(client, message(n))
+    replies.clear()
+    await spend(db, "U_a", 60, 40)
+
+    await post_webhook(client, message(5))
+
+    [(reply_token, messages)] = replies
+    assert reply_token == "rt-5"
+    assert [message.text for message in messages] == suspended_reply_texts()
+    assert await db.fetchval("SELECT status FROM messages WHERE line_event_id = 'ev-5'") == "skipped"
+
+
+async def test_after_suspension_expires_the_session_goes_the_usual_way(client, db, redis, replies, buffer_limit):
+    """239②-6. key ของ state หมดอายุแล้ว แล้วข้อความใหม่เข้ามา → ทางเดิม: buffer มีแค่ข้อความใหม่ · BUFFERING
+    มีงานคุย · ข้อความเก่ายังเป็น skipped"""
+    await accept_pdpa(client)
+    for n in range(1, 5):
+        await post_webhook(client, message(n))
+    [session] = await open_sessions(db)
+    session_id = str(session["session_id"])
+    # จำลองครบ 24 ชั่วโมง: key ของ state หมดอายุ · worker หยิบใบสั่งงานของข้อความที่ 1 ไปจบแล้ว
+    await redis.delete(f"session:{session_id}:state", "jobs")
+    replies.clear()
+
+    await post_webhook(client, message(5, "น้ำท่วมหน้าบ้าน"))
+
+    assert [item["content"] for item in await buffer_of(redis, session_id)] == ["น้ำท่วมหน้าบ้าน"]
+    assert await state_of(redis, session_id) == "BUFFERING"
+    assert await jobs(redis) == [{"kind": "chat", "session_id": session_id}]
+    assert replies == []
+    assert await statuses(db) == ["skipped"] * 4 + ["pending"]

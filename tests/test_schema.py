@@ -49,3 +49,38 @@ async def test_user_daily_token_limit_defaults_to_two_million(db):
     )
 
     assert limit == 2_000_000
+
+
+async def test_session_buffer_limit_defaults_to_thirty(db):
+    """239②-14. insert แถว ai_configs โดยไม่ใส่เพดาน → session_buffer_limit = 30 · #239"""
+    model_id = await db.fetchval("INSERT INTO models (provider, name) VALUES ('test', 'test-model') RETURNING model_id")
+    prompt_id = await db.fetchval("INSERT INTO prompts (prompt) VALUES ('test prompt') RETURNING prompt_id")
+
+    limit = await db.fetchval(
+        """
+        INSERT INTO ai_configs (chat_model_id, chat_prompt_id, analyzer_model_id, analyzer_prompt_id)
+        VALUES ($1, $2, $1, $2) RETURNING session_buffer_limit
+        """,
+        model_id,
+        prompt_id,
+    )
+
+    assert limit == 30
+
+
+async def test_message_status_accepts_skipped(db):
+    """239②-15. ตั้ง messages.status เป็น skipped → บันทึกได้ · #239"""
+    user_id = await db.fetchval(
+        "INSERT INTO users (line_user_id, pdpa_accepted_at) VALUES ('U_a', now()) RETURNING user_id"
+    )
+    session_id = await db.fetchval("INSERT INTO sessions (user_id) VALUES ($1) RETURNING session_id", user_id)
+
+    status = await db.fetchval(
+        """
+        INSERT INTO messages (session_id, role, type, content, status)
+        VALUES ($1, 'user', 'text', 'สแปม', 'skipped') RETURNING status
+        """,
+        session_id,
+    )
+
+    assert status == "skipped"

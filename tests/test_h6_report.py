@@ -506,3 +506,69 @@ async def test_analyser_uses_the_active_config_not_the_newest_row(client, db, ai
     assert messages[0].content == ANALYSER_PROMPT
     [report] = await reports_of(db, session_id)
     assert report["ai_config_id"] == ai_config
+
+
+# --- #239 ② เพดานข้อความใน buffer ต่อใบ — spec ใน #239 · แบบ docs/designs/09-modules/239-buffer-limit.puml ---
+
+
+async def skip_first(db, session_id, count):
+    """count แถวแรกของใบเป็น skipped — ข้อความที่ส่งรัวจนใบถูกพัก"""
+    await db.execute(
+        """
+        UPDATE messages SET status = 'skipped'
+        WHERE message_id IN (SELECT message_id FROM messages WHERE session_id = $1 ORDER BY created_at LIMIT $2)
+        """,
+        session_id,
+        count,
+    )
+
+
+async def test_analyser_sees_only_messages_that_are_not_skipped(client, db, ai_config, analyser_ai):
+    """239②-11. ใบมีข้อความ skipped ปนข้อความจริง (รูปและตำแหน่งที่ skipped อยู่ก่อนรูปและตำแหน่งจริง)
+    → AI เห็นเฉพาะข้อความที่ไม่ใช่ skipped · [รูป 1] [ตำแหน่ง 1] คือรูปและตำแหน่งจริง · รายงานผูกรูปและหมุดจริง"""
+    session_id, [spam_photo, photo] = await closed_session(
+        db,
+        ("user", "image", "/uploads/spam.jpg"),
+        ("user", "location", (1.0, 2.0)),
+        ("user", "text", "สแปม"),
+        ("user", "text", "น้ำท่วมหน้าบ้าน"),
+        ("assistant", "text", "น้ำสูงแค่ไหนครับ"),
+        ("user", "image", "/uploads/photo.jpg"),
+        ("user", "location", (13.75, 100.5)),
+    )
+    await skip_first(db, session_id, 3)
+    analyser_ai.replies = [answer({"desc": "น้ำท่วมหน้าบ้าน", "tags": ["น้ำท่วม"], "location": 1, "images": [1]})]
+
+    await run_analyse(session_id)
+
+    assert sent_to_ai(analyser_ai.calls[0]) == [
+        ("system", "text", ANALYSER_PROMPT),
+        ("user", "text", "น้ำท่วมหน้าบ้าน"),
+        ("assistant", "text", "น้ำสูงแค่ไหนครับ"),
+        ("user", "text", "[รูป 1]"),
+        ("user", "image", "/uploads/photo.jpg"),
+        ("user", "text", "[ตำแหน่ง 1]"),
+        SESSION_EXPIRED,
+    ]
+    [report] = await reports_of(db, session_id)
+    assert (report["lat"], report["lng"]) == (13.75, 100.5)
+    assert await report_of_attachment(db, photo) == report["report_id"]
+    assert await report_of_attachment(db, spam_photo) is None
+
+
+async def test_session_with_only_skipped_messages_is_not_sent_to_ai(client, db, ai_config, analyser_ai):
+    """239②-12. ใบมีแต่ข้อความ skipped → ไม่เรียก AI · ใบเป็น analysed · ไม่มีรายงาน"""
+    session_id, _ = await closed_session(
+        db,
+        ("user", "text", "สแปม"),
+        ("user", "image", "/uploads/spam.jpg"),
+        ("user", "text", "สแปม"),
+    )
+    await skip_first(db, session_id, 3)
+
+    await run_analyse(session_id)
+
+    assert analyser_ai.calls == []
+    assert await db.fetchval("SELECT count(*) FROM ai_calls") == 0
+    assert await reports_of(db, session_id) == []
+    assert await status_of(db, session_id) == "analysed"

@@ -28,5 +28,5 @@ async def finish_closing(silent: Session) -> None:
         await job.enqueue_analyse(silent)
         return
     await state.stop_closing(silent)
-    if await session.has_buffer(silent) and await state.start_buffering(silent):
-        await job.enqueue_chat(silent)
+    if await session.has_buffer(silent.session_id) and await state.start_buffering(silent.session_id):
+        await job.enqueue_chat(silent.session_id)

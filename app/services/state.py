@@ -10,9 +10,9 @@ from app.models.session import Session
 SUSPEND_SECONDS = 24 * 60 * 60
 
 
-async def start_buffering(session: Session) -> bool:
+async def start_buffering(session_id: UUID) -> bool:
     """IDLE → BUFFERING · True = เพิ่งเปลี่ยน (ผู้ชนะคนเดียว) · False = BUFFERING / PROCESSING อยู่แล้ว"""
-    return await redis.set_buffering_if_idle(session.session_id)
+    return await redis.set_buffering_if_idle(session_id)
 
 
 async def start_processing(session_id: UUID) -> bool:
@@ -35,8 +35,8 @@ async def stop_closing(session: Session) -> None:
     await redis.clear_state_if_closing(session.session_id)
 
 
-async def is_suspended(session: Session) -> bool:
-    return await redis.get_state(session.session_id) == "SUSPENDED"
+async def is_suspended(session_id: UUID) -> bool:
+    return await redis.get_state(session_id) == "SUSPENDED"
 
 
 async def suspend(session: Session) -> None:

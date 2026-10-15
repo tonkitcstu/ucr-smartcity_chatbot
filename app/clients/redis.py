@@ -83,6 +83,11 @@ async def append_history(session_id: UUID, items: list[ContextMessage]) -> None:
     await client.rpush(_key(session_id, "history"), *[item.model_dump_json() for item in items])
 
 
+async def drop_from_buffer(session_id: UUID, count: int) -> None:
+    """ตัด count ข้อความแรกออก · ข้อความที่ต่อท้ายทีหลังยังอยู่"""
+    await client.ltrim(_key(session_id, "buffer"), count, -1)
+
+
 async def clear_buffer(session_id: UUID) -> None:
     await client.delete(_key(session_id, "buffer"))
 

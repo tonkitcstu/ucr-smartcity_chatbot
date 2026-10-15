@@ -4,7 +4,7 @@ import asyncio
 
 from app.core.config import SWEEP_EVERY_SECONDS
 from app.models.session import Session
-from app.services import job, session
+from app.services import job, session, state
 
 
 async def run() -> None:
@@ -17,7 +17,7 @@ async def run() -> None:
 async def sweep() -> None:
     """ทุกใบที่เงียบ · ได้ใบไปปิด (IDLE → CLOSING) → finish_closing · กำลังคุยอยู่ → ข้าม"""
     for silent in await session.find_silent():
-        if await session.start_closing(silent):
+        if await state.start_closing(silent):
             await finish_closing(silent)
 
 
@@ -27,6 +27,6 @@ async def finish_closing(silent: Session) -> None:
     if await session.close(silent):
         await job.enqueue_analyse(silent)
         return
-    await session.stop_closing(silent)
-    if await session.has_buffer(silent) and await session.start_buffering(silent):
+    await state.stop_closing(silent)
+    if await session.has_buffer(silent) and await state.start_buffering(silent):
         await job.enqueue_chat(silent)

@@ -9,7 +9,7 @@ from linebot.v3.messaging import TextMessage
 from app.clients import line
 from app.core.config import SILENCE_SECONDS
 from app.models.job import Job
-from app.services import analyser, attachment, communicator, job, prompt, report, session, user
+from app.services import analyser, attachment, communicator, job, prompt, report, session, state, user
 
 # อ้างถึง task ที่ยังทำอยู่ ไม่ให้โดนเก็บกวาดกลางทาง
 running: set[asyncio.Task] = set()
@@ -37,7 +37,7 @@ async def run_chat(job: Job) -> None:
     reply ครั้งเดียวทุกข้อความที่ AI แยกมา · ปุ่มที่ AI เลือกอยู่ที่ข้อความสุดท้าย (LINE แสดงปุ่มของข้อความสุดท้ายเท่านั้น)"""
     session_id = job.session_id
     await wait_for_silence(session_id)
-    await session.start_processing(session_id)
+    await state.start_processing(session_id)
     await line.show_loading(await user.line_id_for(session_id))
 
     buffer = await session.read_buffer(session_id)
@@ -52,6 +52,7 @@ async def run_chat(job: Job) -> None:
     replies.append(TextMessage(text=answer.texts[-1], quick_reply=line.build_quick_reply(answer.buttons)))
     await line.reply(buffer[-1].reply_token, replies)
     await session.finish(session_id, buffer, new_context, answer.texts)
+    await state.finish_processing(session_id)
 
 
 async def run_analyse(job: Job) -> None:

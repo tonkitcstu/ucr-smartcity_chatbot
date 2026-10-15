@@ -1,0 +1,36 @@
+@startuml 239-buffer-limit-state
+' state ของใบเมื่อมี SUSPENDED — #239 เคส ② · ทางเดินของข้อความที่ 31 ดูที่ 239-buffer-limit
+' ทุกการเปลี่ยนเช็คกับเขียนในคำสั่งเดียวของ Redis · ใบที่เป็น SUSPENDED ไม่มีใครเปลี่ยนได้ นอกจากหมดอายุเอง
+' กล่อง = state · ลูกศร = ฟังก์ชันใน services/state.py · บรรทัดถัดมา = คำสั่ง Redis · บรรทัดสุดท้าย = ใครเรียก
+skinparam defaultFontName "Thonburi"
+skinparam shadowing false
+
+title ~#239 ② — state ของใบเมื่อมี SUSPENDED
+
+state IDLE : ไม่มี key ใน Redis
+state BUFFERING : รอผู้แจ้งเงียบครบ 3 วินาที
+state PROCESSING : worker เรียก AI แล้วตอบ
+state CLOSING : ตัวกวาดกำลังปิดใบ
+state SUSPENDED #FFE8E8 : พักใบ 24 ชั่วโมง\nข้อความถูกบันทึกแล้วติดป้าย skipped
+
+[*] --> IDLE : ใบเปิดใหม่
+IDLE --> BUFFERING : <b>start_buffering</b>\nSET NX\ncontroller · ตัวกวาด
+BUFFERING --> PROCESSING : <b>start_processing -> bool</b>\nSET IFEQ BUFFERING\nworker
+PROCESSING --> IDLE : <b>finish_processing</b>\nDELEX IFEQ PROCESSING\nworker
+IDLE --> CLOSING : <b>start_closing</b>\nSET NX\nตัวกวาด
+CLOSING --> IDLE : <b>stop_closing</b>\nDELEX IFEQ CLOSING\nตัวกวาด
+CLOSING --> [*] : session.close()\nลบทุก key ของใบ
+
+IDLE --> SUSPENDED : <b>suspend</b>\nSET EX 86400\ncontroller ตอนข้อความที่ 31
+BUFFERING --> SUSPENDED : <b>suspend</b>
+PROCESSING --> SUSPENDED : <b>suspend</b>
+CLOSING --> SUSPENDED : <b>suspend</b>
+SUSPENDED --> IDLE : key หมดอายุเองใน 24 ชั่วโมง
+
+note right of SUSPENDED
+  ไม่มีลูกศรออกจาก SUSPENDED นอกจากหมดอายุ เพราะ
+  SET NX ไม่เขียนเมื่อมี key อยู่แล้ว
+  SET IFEQ และ DELEX IFEQ ไม่เขียนเมื่อค่าไม่ตรง
+  controller เช็ค <b>is_suspended</b> (GET) ก่อนทุกข้อความ
+end note
+@enduml

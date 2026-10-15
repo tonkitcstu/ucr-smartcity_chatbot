@@ -1,0 +1,148 @@
+@startuml 239-buffer-limit
+' เพดานข้อความใน buffer ต่อใบ — #239 เคส ② · เคส ① token ต่อผู้แจ้งต่อวันอยู่ที่ 239-user-token-limit · เคส ③ AI ทั้งระบบ ยังไม่ทำ
+' กันคนส่งข้อความรัวจนบอทต้องส่งก้อนใหญ่ให้ AI — T10 (ค่าใช้จ่าย AI ไม่พุ่งเกินเพดาน แม้มีคนส่งข้อความรัว ๆ หรือก่อกวน)
+' S30 — ส่งรัวจนข้อความที่บอทยังไม่ได้ตอบครบเพดาน → ข้อความที่ค้างและข้อความนี้ไม่ถูกส่งให้ AI การคุยถูกพัก 24 ชั่วโมง ได้ข้อความสำรอง
+' Idea ตัดสิน (2026-10-14):
+'   นับจำนวนข้อความใน buffer ของใบ คือข้อความที่บอทยังไม่ได้ตอบ · รูปนับรูปละหนึ่งข้อความ
+'   เพดานเก็บใน ai_configs แถวที่เลือก แบบเดียวกับเคส ① · ค่าแรก 30
+'   ข้อความที่ 31: ติดป้าย skipped ให้ข้อความใน buffer และข้อความนี้ · ล้าง buffer · ใบเป็น SUSPENDED 24 ชั่วโมง · ตอบข้อความแข็ง
+'   ข้อความยังอยู่ใน PSQL — S6 (ข้อความที่ส่งมาถูกเก็บไว้ ไม่หาย) · ตัววิเคราะห์ข้ามข้อความ skipped
+'   ครบ 24 ชั่วโมง key หมดอายุ ใบเป็น IDLE ธรรมดา ปิดและวิเคราะห์ตามปกติ
+' Idea ตัดสิน (2026-10-15):
+'   แดชบอร์ดเห็นทุกข้อความ (S23) · ตัววิเคราะห์เห็นเฉพาะข้อความที่ไม่ใช่ skipped
+'   ใบที่มีแต่ข้อความ skipped ไม่วิเคราะห์ · ถ้อยคำข้อความแข็งตามโน้ตท้ายภาพ
+' state ของใบทั้งหมดดูที่ 239-buffer-limit-state
+' กล่อง = ไฟล์ · ลูกศร = ใครเรียกใคร
+skinparam defaultFontName "Thonburi"
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+hide footbox
+autonumber
+
+title ~#239 ② — เพดานข้อความใน buffer ต่อใบ
+
+actor "LINE\n(ผู้แจ้ง)" as LINE
+box "app/" #F5F5F5
+  participant "controllers/line.py" as CTRL
+  participant "workers/worker.py" as W
+end box
+box "services/" #EEF4FF
+  participant "session.py" as S
+  participant "state.py" as ST
+  participant "quota.py" as Q
+end box
+box "clients/" #FFF4E8
+  participant "database.py" as DB
+  participant "redis.py" as R
+  participant "line\n(LINE API)" as CL
+end box
+
+== controller: ทุกข้อความที่เข้ามา (ยอมรับ PDPA แล้ว) ==
+LINE -> CTRL : ข้อความ
+CTRL -> S : open_for(user) · save_message(...)
+note right of S #F0F0F0
+  เปิดใบและบันทึกข้อความลง PSQL เสมอ ก่อนเช็คเพดานทุกตัว
+  S6 — ข้อความที่ส่งมาถูกเก็บไว้ ไม่หาย
+end note
+
+CTRL -> ST : is_suspended(session)
+ST -> R : get_state(session_id)
+R --> ST : "SUSPENDED" หรือไม่ใช่
+alt ใบเป็น SUSPENDED
+  CTRL -> S : skip(session, message)
+  note right of S #F0F0F0
+    buffer ว่างอยู่แล้ว จึงติดป้ายแค่ข้อความนี้
+  end note
+  CTRL -> Q : suspended_message()
+  CTRL -> CL : reply(reply token ของข้อความนี้, [ข้อความแข็ง])
+  note over CTRL, CL #F0F0F0 : จบตรงนี้ — ไม่เช็คเพดานอื่น ไม่ต่อ buffer ไม่ใส่ใบสั่งงาน
+else ไม่ใช่
+  CTRL -> Q : is_over_daily_limit(user)
+  note right of Q #F0F0F0
+    เคส ① ตามเดิม (239-user-token-limit) · ถึงเพดานแล้วตอบข้อความแข็งของเคส ① แล้วจบ
+  end note
+
+  CTRL -> Q : is_buffer_full(session)
+  Q -> DB : select_active_ai_config()
+  DB --> Q : session_buffer_limit
+  Q -> R : buffer_length(session_id)
+  R --> Q : จำนวนข้อความใน buffer
+  Q --> CTRL : จำนวน >= เพดาน
+
+  alt buffer ครบเพดานแล้ว — ข้อความนี้คือข้อความที่ 31
+    CTRL -> S : skip(session, message)
+    S -> R : get_buffer(session_id)
+    S -> DB : mark_skipped(ข้อความใน buffer + ข้อความนี้)
+    S -> R : clear_buffer(session_id)
+    CTRL -> ST : suspend(session)
+    ST -> R : set_suspended(session_id, 24 ชั่วโมง)
+    note right of R
+      <b>set_suspended</b>
+      SET state SUSPENDED EX 86400
+      เขียนทับได้ทุก state · หมดอายุเองแล้วใบเป็น IDLE
+    end note
+    CTRL -> Q : suspended_message()
+    CTRL -> CL : reply(reply token ของข้อความนี้, [ข้อความแข็ง])
+  else ยังไม่ครบ
+    CTRL -> S : buffer(message)
+    CTRL -> ST : start_buffering(session)
+    note right of ST #F0F0F0 : ได้ True → job.enqueue_chat ตามเดิม
+  end
+end
+
+== worker: ใบสั่งงานคุยที่รอเงียบอยู่ ==
+W -> ST : start_processing(session_id)
+ST -> R : set_processing_if_buffering(session_id)
+note right of R
+  <b>set_processing_if_buffering</b>
+  SET state PROCESSING IFEQ BUFFERING
+  เปลี่ยนเฉพาะตอนที่ state เป็น BUFFERING · คืน True / False
+end note
+alt ได้ False — ใบเป็น SUSPENDED แล้ว
+  W -> W : จบงานนี้ · ไม่เรียก AI ไม่ reply\n(controller ตอบข้อความแข็งไปแล้ว)
+else ได้ True
+  W -> S : คุยตามเดิม · reply · finish(...)
+  W -> ST : finish_processing(session_id)
+  ST -> R : clear_state_if_processing(session_id)
+  note right of R
+    <b>clear_state_if_processing</b>
+    DELEX state IFEQ PROCESSING
+    ข้อความที่ 31 เข้ามาตอน worker กำลังเรียก AI ได้
+    worker ตอบรอบนั้นตามปกติ แต่ SUSPENDED ไม่ถูกลบ
+  end note
+end
+
+== worker: งานวิเคราะห์หลังปิดใบ ==
+W -> S : read_transcript_for_analysis(session_id)
+S -> DB : select_transcript(session_id)
+S -> S : ข้ามข้อความ skipped
+note right of S #F0F0F0
+  แดชบอร์ดยังอ่าน read_transcript ที่ได้ทุกข้อความ
+  S23 — เปิดดูย้อนหลังแล้ว "เห็นทุกข้อความทั้งสองฝั่ง"
+  ตัววิเคราะห์และ report.save ใช้ชุดที่ข้ามแล้วชุดเดียวกัน
+  เลขป้าย [รูป n] [ตำแหน่ง n] จึงชี้แถวเดียวกัน
+end note
+alt ไม่เหลือข้อความ — ใบมีแต่ข้อความ skipped
+  W -> S : mark_analysed(session_id)
+  note right of S #F0F0F0 : ไม่เรียก AI · ใบไม่มีรายงาน
+else เหลือข้อความ
+  W -> W : analyser · report.save · mark_analysed ตามเดิม
+end
+
+note over LINE, CL #F0F0F0
+  ตัวกวาดไม่ต้องเขียนเพิ่ม — start_closing เขียนเฉพาะตอนไม่มี key ใบที่เป็น SUSPENDED จึงถูกข้ามเอง
+    stop_closing ลบเฉพาะตอนที่ state เป็น CLOSING (clear_state_if_closing · DELEX state IFEQ CLOSING)
+  SET IFEQ และ DELEX ต้องใช้ Redis 8.4 ขึ้นไป
+  เปลี่ยนเพดาน = เพิ่มแถว ai_configs แล้วเลือกแถวนั้น (#242)
+end note
+
+note over LINE, CL #F0F0F0
+  <b>ข้อความแข็ง</b> (TC7 ข้อยกเว้น 1 — ข้อความสำรองตอนโควตาหมด)
+  "ตอนนี้ได้รับข้อความเยอะเกินไปค่ะ ขอพักการคุยไว้ก่อนนะคะ พรุ่งนี้มาคุยกันต่อได้ค่ะ"
+  ใช้ถ้อยคำเดียวกันทั้งตอนข้อความที่ 31 และทุกข้อความระหว่างพักใบ · reply ไม่นับโควตาข้อความของ LINE
+end note
+
+note over LINE, CL #F0F0F0
+  ระวัง — คนที่ส่งไม่หยุดทำให้ตาราง messages โตข้อความละหนึ่งแถว (S6) · กันได้ด้วยงานกัน DDoS หน้าแอปที่แยกไว้ใน #239
+end note
+@enduml

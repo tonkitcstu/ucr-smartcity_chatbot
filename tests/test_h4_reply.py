@@ -533,11 +533,12 @@ async def test_next_round_shows_ai_its_own_text_without_buttons(client, db, redi
 
 
 async def test_answer_that_is_not_the_format_is_recorded_as_error(client, db, redis, outside, ai_answers, replies):
-    """H10-11. AI ตอบมาแกะเป็น ChatAnswer ไม่ได้ → ai_calls status error มีเหตุ · response = ของดิบ · โยน error ต่อ (นอก happy path)"""
-    from pydantic import ValidationError
+    """H10-11. AI ตอบมาแกะเป็น ChatAnswer ไม่ได้ → ai_calls status error มีเหตุ · response = ของดิบ · ผู้แจ้งได้ข้อความสำรอง (#213)"""
+    from app.workers.worker import FALLBACK_TEXT
 
-    with pytest.raises(ValidationError):
-        await chat_one_round(client, redis, ai_answers, "ขอโทษค่ะ ตอนนี้ตอบไม่ได้")
+    await chat_one_round(client, redis, ai_answers, "ขอโทษค่ะ ตอนนี้ตอบไม่ได้")
+
+    assert [[m.text for m in messages] for _, messages in replies] == [[FALLBACK_TEXT]]
 
     ai_call = await db.fetchrow("SELECT kind, status, error, response FROM ai_calls")
     assert (ai_call["kind"], ai_call["status"], ai_call["response"]) == ("communicator", "error", "ขอโทษค่ะ ตอนนี้ตอบไม่ได้")
@@ -656,13 +657,14 @@ async def test_five_is_counted_after_blank_texts_are_dropped(client, db, redis, 
 
 @pytest.mark.parametrize("texts", [[], ["", "  "]], ids=["empty-list", "all-blank"])
 async def test_no_text_left_is_recorded_as_error(client, db, redis, outside, ai_answers, replies, texts):
-    """H11-6. ไม่เหลือข้อความให้ส่ง → ไม่ reply · ไม่มีแถวของบอท · ai_calls status error มีเหตุ · response = ของดิบ · โยน error ต่อ (นอก happy path)"""
+    """H11-6. ไม่เหลือข้อความให้ส่ง → ได้แค่ข้อความสำรอง (#213) · ไม่มีแถวของบอท · ai_calls status error มีเหตุ · response = ของดิบ"""
+    from app.workers.worker import FALLBACK_TEXT
+
     raw = raw_answer(texts)
 
-    with pytest.raises(ValueError):
-        await chat_one_round(client, redis, ai_answers, raw)
+    await chat_one_round(client, redis, ai_answers, raw)
 
-    assert replies == []
+    assert [[m.text for m in messages] for _, messages in replies] == [[FALLBACK_TEXT]]
     assert await bot_rows(db) == []
     ai_call = await db.fetchrow("SELECT kind, status, error, response FROM ai_calls")
     assert (ai_call["kind"], ai_call["status"], ai_call["response"]) == ("communicator", "error", raw)
@@ -881,3 +883,162 @@ async def test_suspended_while_ai_answers_still_replies_and_stays_suspended(
     assert [message.text for message in messages] == [ANSWER]
     assert await db.fetchval("SELECT status FROM messages WHERE line_event_id = 'ev-1'") == "answered"
     assert await redis.get(f"session:{session_id}:state") == "SUSPENDED"
+
+
+# --- #240 ข้อความที่เข้ามาระหว่างบอทกำลังตอบ ---
+
+
+def user_texts(messages):
+    """ข้อความของผู้แจ้งที่ส่งให้ AI ในครั้งนั้น"""
+    return [m.content for m in messages if m.role == "user" and m.type == "text"]
+
+
+async def test_message_during_ai_answer_gets_its_own_round(client, db, redis, outside, ai_calls, replies, monkeypatch):
+    """240-1. ข้อความที่สองเข้ามาระหว่าง AI ตอบข้อความแรก → ยังอยู่ใน buffer · ได้งานคุยใหม่ · รอบใหม่ AI เห็น และตอบด้วย token ของมัน"""
+    from app.clients import ai
+
+    await accept_pdpa(client)
+    await post_webhook(client, text_event("น้ำท่วมหน้าบ้าน", user_id="U_a", reply_token="rt-1", event_id="ev-1"))
+    answer_from_ai = ai.chat
+
+    async def second_message_meanwhile(model, messages, schema):
+        if len(ai_calls) == 0:
+            await post_webhook(
+                client, text_event("ท่วมถึงเข่า", user_id="U_a", reply_token="rt-2", event_id="ev-2", message_id="m-2")
+            )
+        return await answer_from_ai(model, messages, schema)
+
+    monkeypatch.setattr(ai, "chat", second_message_meanwhile)
+
+    await run_next_job(redis)
+    assert await redis.llen("jobs") == 1
+    await run_next_job(redis)
+
+    assert [token for token, _ in replies] == ["rt-1", "rt-2"]
+    assert user_texts(ai_calls[1][1])[-1] == "ท่วมถึงเข่า"
+    statuses = await db.fetch("SELECT status FROM messages WHERE role = 'user' ORDER BY created_at")
+    assert [row["status"] for row in statuses] == ["answered", "answered"]
+
+
+async def test_image_during_ai_answer_is_downloaded_and_reported(
+    client, db, redis, outside, ai_calls, downloads, replies, monkeypatch
+):
+    """240-2. รูปเข้ามาระหว่าง AI ตอบ → รอบใหม่ดาวน์โหลดรูป · ปิดใบแล้วตัววิเคราะห์ทำงานได้ ไม่พัง"""
+    from app.clients import ai
+    from app.workers import worker
+
+    await accept_pdpa(client)
+    await post_webhook(client, text_event("น้ำท่วมหน้าบ้าน", user_id="U_a", reply_token="rt-1", event_id="ev-1"))
+    session_id = await db.fetchval("SELECT session_id FROM sessions WHERE status = 'open'")
+    answer_from_ai = ai.chat
+
+    async def image_meanwhile(model, messages, schema):
+        if len(ai_calls) == 0:
+            await post_webhook(client, image_event(user_id="U_a", reply_token="rt-2", event_id="ev-2"))
+        return await answer_from_ai(model, messages, schema)
+
+    monkeypatch.setattr(ai, "chat", image_meanwhile)
+
+    await run_next_job(redis)
+    await run_next_job(redis)
+
+    assert downloads == ["img-1"]
+    assert await db.fetchval("SELECT count(*) FROM attachments") == 1
+    transcript = await worker.session.read_transcript_for_analysis(session_id)
+    await worker.prompt.build_analyse_context(await worker.prompt.active_config(), transcript)
+
+
+# --- #213 AI พังหรือช้าระหว่างตอบ ---
+
+
+def ai_breaks(monkeypatch):
+    from app.clients import ai
+
+    async def broken(model, messages, schema):
+        raise RuntimeError("AI is down")
+
+    monkeypatch.setattr(ai, "chat", broken)
+
+
+async def test_ai_error_replies_fallback_and_keeps_buffer(client, db, redis, outside, replies, monkeypatch):
+    """213-1. AI โยน error → ข้อความสำรองด้วย token ล่าสุด · state กลับ IDLE · buffer อยู่ครบ · ข้อความยัง pending · ไม่มีงานใหม่"""
+    from app.workers.worker import FALLBACK_TEXT
+
+    await accept_pdpa(client)
+    await post_webhook(client, text_event("น้ำท่วมหน้าบ้าน", user_id="U_a", reply_token="rt-1", event_id="ev-1"))
+    session_id = await db.fetchval("SELECT session_id FROM sessions WHERE status = 'open'")
+    ai_breaks(monkeypatch)
+
+    await run_next_job(redis)
+
+    assert [(token, [m.text for m in messages]) for token, messages in replies] == [("rt-1", [FALLBACK_TEXT])]
+    assert await redis.get(f"session:{session_id}:state") is None
+    assert await redis.llen(f"session:{session_id}:buffer") == 1
+    assert await db.fetchval("SELECT status FROM messages WHERE line_event_id = 'ev-1'") == "pending"
+    assert await redis.llen("jobs") == 0
+
+
+async def test_next_message_after_ai_error_sees_the_earlier_one(
+    client, db, redis, outside, ai_calls, replies, monkeypatch
+):
+    """213-2. หลัง AI พัง ข้อความถัดไปได้งานคุย · AI เห็นทั้งข้อความที่ค้างและข้อความใหม่ · ผู้แจ้งไม่ต้องเล่าซ้ำ"""
+    from app.clients import ai
+
+    answer_from_ai = ai.chat
+    await accept_pdpa(client)
+    await post_webhook(client, text_event("น้ำท่วมหน้าบ้าน", user_id="U_a", reply_token="rt-1", event_id="ev-1"))
+    ai_breaks(monkeypatch)
+    await run_next_job(redis)
+
+    monkeypatch.setattr(ai, "chat", answer_from_ai)
+    await post_webhook(
+        client, text_event("ตอบหน่อย", user_id="U_a", reply_token="rt-2", event_id="ev-2", message_id="m-2")
+    )
+    await run_next_job(redis)
+
+    [(model, messages)] = ai_calls
+    assert user_texts(messages)[-2:] == ["น้ำท่วมหน้าบ้าน", "ตอบหน่อย"]
+    assert replies[-1][0] == "rt-2"
+    statuses = await db.fetch("SELECT status FROM messages WHERE role = 'user' ORDER BY created_at")
+    assert [row["status"] for row in statuses] == ["answered", "answered"]
+
+
+async def test_slow_ai_counts_as_error(client, db, redis, outside, replies, monkeypatch):
+    """213-3. AI ช้าเกิน AI_TIMEOUT_SECONDS → ข้อความสำรอง · state กลับ IDLE"""
+    from app.clients import ai
+    from app.workers import worker
+
+    async def slow(model, messages, schema):
+        await asyncio.sleep(5)
+
+    monkeypatch.setattr(ai, "chat", slow)
+    monkeypatch.setattr(worker, "AI_TIMEOUT_SECONDS", 0.1)
+    await accept_pdpa(client)
+    await post_webhook(client, text_event("น้ำท่วมหน้าบ้าน", user_id="U_a", reply_token="rt-1", event_id="ev-1"))
+    session_id = await db.fetchval("SELECT session_id FROM sessions WHERE status = 'open'")
+
+    await run_next_job(redis)
+
+    assert [[m.text for m in messages] for _, messages in replies] == [[worker.FALLBACK_TEXT]]
+    assert await redis.get(f"session:{session_id}:state") is None
+
+
+async def test_ai_error_while_suspended_sends_nothing(client, db, redis, outside, replies, monkeypatch):
+    """213-4. ใบถูกพักระหว่าง AI ตอบแล้ว AI พัง → ไม่มีข้อความสำรอง (controller ตอบข้อความแข็งไปแล้ว) · ยังเป็น SUSPENDED"""
+    from app.clients import ai
+
+    await accept_pdpa(client)
+    await post_webhook(client, text_event("น้ำท่วมหน้าบ้าน", user_id="U_a", reply_token="rt-1", event_id="ev-1"))
+    session_id = await db.fetchval("SELECT session_id FROM sessions WHERE status = 'open'")
+
+    async def suspended_then_broken(model, messages, schema):
+        await suspend(db, redis, session_id)
+        raise RuntimeError("AI is down")
+
+    monkeypatch.setattr(ai, "chat", suspended_then_broken)
+
+    await run_next_job(redis)
+
+    assert replies == []
+    assert await redis.get(f"session:{session_id}:state") == "SUSPENDED"
+    assert await redis.llen(f"session:{session_id}:buffer") == 0

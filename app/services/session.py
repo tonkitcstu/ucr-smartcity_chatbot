@@ -52,13 +52,19 @@ async def read_history(session_id: UUID) -> list[ContextMessage]:
 async def finish(
     session_id: UUID, buffer: list[Message], new_context: list[ContextMessage], answers: list[str]
 ) -> None:
-    """บันทึกคำตอบบอททีละข้อความตามลำดับ · ข้อความใน buffer → ตอบแล้ว · ต่อประวัติ ข้อความละรายการ · ล้าง buffer"""
+    """บันทึกคำตอบบอททีละข้อความตามลำดับ · ข้อความใน buffer → ตอบแล้ว · ต่อประวัติ ข้อความละรายการ
+    ตัดออกจาก buffer เฉพาะข้อความที่ AI เห็น · ข้อความที่เข้ามาระหว่าง AI ตอบยังรออยู่ (#240)"""
     for answer in answers:
         await database.insert_bot_message(session_id, answer)
     await database.mark_answered([message.message_id for message in buffer])
     bot_context = [ContextMessage(role="assistant", type="text", content=answer) for answer in answers]
     await redis.append_history(session_id, [*new_context, *bot_context])
-    await redis.clear_buffer(session_id)
+    await redis.drop_from_buffer(session_id, len(buffer))
+
+
+async def drop_answered(session_id: UUID, buffer: list[Message]) -> None:
+    """ตัดข้อความชุดนี้ออกจากต้น buffer · ข้อความที่เข้ามาทีหลังยังอยู่"""
+    await redis.drop_from_buffer(session_id, len(buffer))
 
 
 async def find_silent() -> list[Session]:
@@ -74,9 +80,9 @@ async def close(session: Session) -> bool:
     return closed
 
 
-async def has_buffer(session: Session) -> bool:
+async def has_buffer(session_id: UUID) -> bool:
     """มีข้อความรอใน buffer"""
-    return await redis.buffer_length(session.session_id) > 0
+    return await redis.buffer_length(session_id) > 0
 
 
 async def read_transcript(session_id: UUID) -> list[TranscriptMessage]:

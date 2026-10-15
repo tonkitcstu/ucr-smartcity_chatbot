@@ -54,7 +54,7 @@ async def on_message(event: MessageEvent) -> None:
 
     current = await session.open_for(found)
     message = await session.save_message(current, incoming)
-    if await state.is_suspended(current):
+    if await state.is_suspended(current.session_id):
         await session.skip(current, message)
         await line.reply(event.reply_token, [quota.suspended_message()])
         return
@@ -68,8 +68,8 @@ async def on_message(event: MessageEvent) -> None:
         return
 
     await session.buffer(message)
-    if await state.start_buffering(current):
-        await job.enqueue_chat(current)
+    if await state.start_buffering(current.session_id):
+        await job.enqueue_chat(current.session_id)
 
 
 def to_incoming(event: MessageEvent) -> IncomingMessage | None:

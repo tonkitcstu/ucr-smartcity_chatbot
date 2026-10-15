@@ -1,4 +1,4 @@
-"""ใบของการคุย: หา/สร้างใบ, บันทึกข้อความ, buffer, state, ประวัติที่คุยมา, ปิดใบ, บทสนทนาทั้งใบ"""
+"""ใบของการคุย: หา/สร้างใบ, บันทึกข้อความ, buffer, ประวัติที่คุยมา, ปิดใบ, บทสนทนาทั้งใบ · state ของใบอยู่ที่ state.py"""
 
 import time
 from uuid import UUID
@@ -28,18 +28,8 @@ async def buffer(message: Message) -> None:
     await redis.set_last_message_at(message.session_id, time.time())
 
 
-async def start_buffering(session: Session) -> bool:
-    """IDLE → BUFFERING · True = เพิ่งเปลี่ยน (ผู้ชนะคนเดียว) · False = BUFFERING / PROCESSING อยู่แล้ว"""
-    return await redis.set_buffering_if_idle(session.session_id)
-
-
 async def last_message_at(session_id: UUID) -> float:
     return await redis.get_last_message_at(session_id)
-
-
-async def start_processing(session_id: UUID) -> None:
-    """BUFFERING → PROCESSING"""
-    await redis.set_processing(session_id)
 
 
 async def read_buffer(session_id: UUID) -> list[Message]:
@@ -54,24 +44,18 @@ async def read_history(session_id: UUID) -> list[ContextMessage]:
 async def finish(
     session_id: UUID, buffer: list[Message], new_context: list[ContextMessage], answers: list[str]
 ) -> None:
-    """บันทึกคำตอบบอททีละข้อความตามลำดับ · ข้อความใน buffer → ตอบแล้ว · ต่อประวัติ ข้อความละรายการ · ล้าง buffer · state → IDLE"""
+    """บันทึกคำตอบบอททีละข้อความตามลำดับ · ข้อความใน buffer → ตอบแล้ว · ต่อประวัติ ข้อความละรายการ · ล้าง buffer"""
     for answer in answers:
         await database.insert_bot_message(session_id, answer)
     await database.mark_answered([message.message_id for message in buffer])
     bot_context = [ContextMessage(role="assistant", type="text", content=answer) for answer in answers]
     await redis.append_history(session_id, [*new_context, *bot_context])
     await redis.clear_buffer(session_id)
-    await redis.clear_state(session_id)
 
 
 async def find_silent() -> list[Session]:
     """ใบ open ที่เงียบเกิน CLOSE_AFTER_MINUTES"""
     return await database.select_silent_sessions(CLOSE_AFTER_MINUTES)
-
-
-async def start_closing(session: Session) -> bool:
-    """IDLE → CLOSING · True = ได้ใบนี้ไปปิด · False = กำลังคุย / มีคนปิดอยู่แล้ว"""
-    return await redis.set_closing_if_idle(session.session_id)
 
 
 async def close(session: Session) -> bool:
@@ -80,11 +64,6 @@ async def close(session: Session) -> bool:
     if closed:
         await redis.clear_session(session.session_id)
     return closed
-
-
-async def stop_closing(session: Session) -> None:
-    """CLOSING → IDLE"""
-    await redis.clear_state(session.session_id)
 
 
 async def has_buffer(session: Session) -> bool:

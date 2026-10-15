@@ -12,7 +12,7 @@ from linebot.v3.webhooks import (
 
 from app.clients import line
 from app.models.line import IncomingMessage
-from app.services import job, pdpa, quota, session, user
+from app.services import job, pdpa, quota, session, state, user
 
 async def handle_webhook(body: str, signature: str) -> None:
     """ลายเซ็นไม่ผ่าน → InvalidSignatureError · event ชนิดอื่นข้าม"""
@@ -57,7 +57,7 @@ async def on_message(event: MessageEvent) -> None:
         return
 
     await session.buffer(message)
-    if await session.start_buffering(current):
+    if await state.start_buffering(current):
         await job.enqueue_chat(current)
 
 

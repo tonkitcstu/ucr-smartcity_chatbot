@@ -63,8 +63,10 @@ async def get_last_message_at(session_id: UUID) -> float:
     return float(await client.get(_key(session_id, "last_message_at")))
 
 
-async def set_processing(session_id: UUID) -> None:
-    await client.set(_key(session_id, "state"), "PROCESSING")
+# SET ... IFEQ และ DELEX ... IFEQ ส่งเป็นคำสั่งดิบ — redis-py ยังจัดสองตัวนี้เป็นของทดลอง (เตือนทุกครั้งที่เรียก)
+async def set_processing_if_buffering(session_id: UUID) -> bool:
+    """คำสั่งเดียว: state เป็น BUFFERING → ตั้ง PROCESSING คืน True · เป็นอย่างอื่น → คืน False (Redis 8.4 ขึ้นไป)"""
+    return bool(await client.execute_command("SET", _key(session_id, "state"), "PROCESSING", "IFEQ", "BUFFERING"))
 
 
 async def get_buffer(session_id: UUID) -> list[Message]:
@@ -85,9 +87,24 @@ async def clear_buffer(session_id: UUID) -> None:
     await client.delete(_key(session_id, "buffer"))
 
 
-async def clear_state(session_id: UUID) -> None:
-    """ลบ key = IDLE"""
-    await client.delete(_key(session_id, "state"))
+async def get_state(session_id: UUID) -> str | None:
+    """None = ไม่มี key = IDLE"""
+    return await client.get(_key(session_id, "state"))
+
+
+async def clear_state_if_processing(session_id: UUID) -> None:
+    """คำสั่งเดียว: state เป็น PROCESSING → ลบ key = IDLE · เป็นอย่างอื่น → ไม่ลบ (Redis 8.4 ขึ้นไป)"""
+    await client.execute_command("DELEX", _key(session_id, "state"), "IFEQ", "PROCESSING")
+
+
+async def clear_state_if_closing(session_id: UUID) -> None:
+    """คำสั่งเดียว: state เป็น CLOSING → ลบ key = IDLE · เป็นอย่างอื่น → ไม่ลบ (Redis 8.4 ขึ้นไป)"""
+    await client.execute_command("DELEX", _key(session_id, "state"), "IFEQ", "CLOSING")
+
+
+async def set_suspended(session_id: UUID, seconds: int) -> None:
+    """เขียนทับได้ทุก state · หมดอายุเองใน seconds วินาทีแล้วใบเป็น IDLE"""
+    await client.set(_key(session_id, "state"), "SUSPENDED", ex=seconds)
 
 
 async def set_closing_if_idle(session_id: UUID) -> bool:

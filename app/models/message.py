@@ -21,6 +21,7 @@ class TranscriptMessage(BaseModel):
     content: str | None
     lat: float | None
     lng: float | None
+    status: Literal["pending", "answered", "skipped"]
     attachment_id: UUID | None
     file_path: str | None
 

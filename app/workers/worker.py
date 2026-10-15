@@ -34,10 +34,12 @@ async def handle(job: Job) -> None:
 
 async def run_chat(job: Job) -> None:
     """งานคุยหนึ่งใบ: รอเงียบ → PROCESSING → loading → เก็บรูป → AI → reply ด้วย token ล่าสุด → IDLE
-    reply ครั้งเดียวทุกข้อความที่ AI แยกมา · ปุ่มที่ AI เลือกอยู่ที่ข้อความสุดท้าย (LINE แสดงปุ่มของข้อความสุดท้ายเท่านั้น)"""
+    reply ครั้งเดียวทุกข้อความที่ AI แยกมา · ปุ่มที่ AI เลือกอยู่ที่ข้อความสุดท้าย (LINE แสดงปุ่มของข้อความสุดท้ายเท่านั้น)
+    ใบถูกพักระหว่างรอเงียบ (#239) → จบงาน ไม่เรียก AI ไม่ reply (controller ตอบข้อความแข็งไปแล้ว)"""
     session_id = job.session_id
     await wait_for_silence(session_id)
-    await state.start_processing(session_id)
+    if not await state.start_processing(session_id):
+        return
     await line.show_loading(await user.line_id_for(session_id))
 
     buffer = await session.read_buffer(session_id)
@@ -56,10 +58,14 @@ async def run_chat(job: Job) -> None:
 
 
 async def run_analyse(job: Job) -> None:
-    """งานวิเคราะห์หนึ่งใบ: บทสนทนาทั้งใบ → AI → รายงาน 0..n → ใบ analysed"""
+    """งานวิเคราะห์หนึ่งใบ: บทสนทนาทั้งใบที่ไม่ใช่ skipped → AI → รายงาน 0..n → ใบ analysed
+    ใบที่มีแต่ข้อความ skipped (#239) → ใบ analysed ไม่เรียก AI ไม่มีรายงาน"""
     session_id = job.session_id
+    transcript = await session.read_transcript_for_analysis(session_id)
+    if not transcript:
+        await session.mark_analysed(session_id)
+        return
     config = await prompt.active_config()
-    transcript = await session.read_transcript(session_id)
     messages = await prompt.build_analyse_context(config, transcript)
     drafts = await analyser.analyse(session_id, config, messages)
     await report.save(session_id, config, drafts, transcript)

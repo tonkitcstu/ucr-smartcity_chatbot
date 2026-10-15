@@ -1,4 +1,5 @@
-"""ใบของการคุย: หา/สร้างใบ, บันทึกข้อความ, buffer, ประวัติที่คุยมา, ปิดใบ, บทสนทนาทั้งใบ · state ของใบอยู่ที่ state.py"""
+"""ใบของการคุย: หา/สร้างใบ, บันทึกข้อความ, buffer, ข้ามข้อความตอนพักใบ, ประวัติที่คุยมา, ปิดใบ, บทสนทนาทั้งใบ
+state ของใบอยู่ที่ state.py"""
 
 import time
 from uuid import UUID
@@ -26,6 +27,13 @@ async def buffer(message: Message) -> None:
     """ต่อท้าย buffer + เวลาข้อความล่าสุด = ตอนนี้ (reply_token อยู่ในข้อความ — worker ใช้ตัวล่าสุด)"""
     await redis.append_buffer(message)
     await redis.set_last_message_at(message.session_id, time.time())
+
+
+async def skip(session: Session, message: Message) -> None:
+    """ข้อความที่ค้างใน buffer และข้อความนี้ → skipped · ล้าง buffer — ใบถูกพัก ไม่ส่งให้ AI (#239)"""
+    buffered = await redis.get_buffer(session.session_id)
+    await database.mark_skipped([item.message_id for item in [*buffered, message]])
+    await redis.clear_buffer(session.session_id)
 
 
 async def last_message_at(session_id: UUID) -> float:
@@ -72,8 +80,13 @@ async def has_buffer(session: Session) -> bool:
 
 
 async def read_transcript(session_id: UUID) -> list[TranscriptMessage]:
-    """ข้อความทั้งใบจาก PSQL เรียงตามเวลา — ตัววิเคราะห์ไม่ใช้ Redis"""
+    """ข้อความทั้งใบจาก PSQL เรียงตามเวลา รวมข้อความ skipped — แดชบอร์ดเห็นทุกข้อความ (S23)"""
     return await database.select_transcript(session_id)
+
+
+async def read_transcript_for_analysis(session_id: UUID) -> list[TranscriptMessage]:
+    """บทสนทนาทั้งใบ ยกเว้นข้อความ skipped (#239) · ตัววิเคราะห์และ report.save ใช้ชุดนี้ชุดเดียวกัน เลขป้ายจึงตรงกัน"""
+    return [message for message in await database.select_transcript(session_id) if message.status != "skipped"]
 
 
 async def mark_analysed(session_id: UUID) -> None:

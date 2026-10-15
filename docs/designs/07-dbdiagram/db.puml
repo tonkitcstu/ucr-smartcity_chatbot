@@ -91,6 +91,7 @@ entity ai_configs {
   * analyzer_prompt_id : uuid <<FK>>
   * is_active : boolean <<true ได้แถวเดียว>>
   * user_daily_token_limit : bigint
+  * system_daily_token_limit : bigint
   * session_buffer_limit : int
   * created_at : timestamptz
 }

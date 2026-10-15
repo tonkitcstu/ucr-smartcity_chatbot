@@ -1,0 +1,85 @@
+@startuml 239-system-token-limit
+' เพดาน token ของตัวคุยทั้งระบบต่อวัน — #239 เคส ③ · เคส ① ต่อผู้แจ้งอยู่ที่ 239-user-token-limit · เคส ② buffer ต่อใบอยู่ที่ 239-buffer-limit
+' กันหลายคนที่ต่างคนต่างไม่ถึงเพดานของตัวเอง รวมกันแล้วใช้งบ AI ของแล็บเกิน — T10 (ค่าใช้จ่าย AI ไม่พุ่งเกินเพดาน แม้มีคนส่งข้อความรัว ๆ หรือก่อกวน)
+' S30 — Given ใช้ AI วันนี้ถึงเพดานแล้ว When มีข้อความเข้ามา Then ตอบด้วยข้อความสำรอง (S6)
+' Idea ตัดสิน (2026-10-15):
+'   เพดานทั้งระบบ 5,000,000 token ต่อวัน (ราว 85 บาท ถ้าขาเข้าต่อขาออก 90 ต่อ 10) · เพดานต่อผู้แจ้งลดเป็น 500,000
+'   ทั้งสองเพดานนับเฉพาะตัวคุย (ai_calls.kind = 'communicator') · ตัววิเคราะห์ไม่ถูกหยุด และไม่ถูกนับ
+'   เช็คที่ controller ต่อจากเคส ① · ใช้ข้อความแข็งเดียวกับเคส ①
+'   เพดานเก็บใน ai_configs แบบเดียวกับเคส ① และ ② · นับวันตามเวลาไทย
+' ตัวเลข token ต่อบทสนทนาประเมินจากระบบเก่า — วัดจริงใน #241
+' กล่อง = ไฟล์ · ลูกศร = ใครเรียกใคร
+skinparam defaultFontName "Thonburi"
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+hide footbox
+autonumber
+
+title ~#239 ③ — เพดาน token ของตัวคุยทั้งระบบต่อวัน
+
+actor "LINE\n(ผู้แจ้ง)" as LINE
+participant "controllers/line.py" as CTRL
+box "services/" #EEF4FF
+  participant "session.py" as S
+  participant "quota.py" as Q
+end box
+box "clients/" #FFF4E8
+  participant "database.py" as DB
+  participant "line\n(LINE API)" as CL
+end box
+
+LINE -> CTRL : ข้อความ (ยอมรับ PDPA แล้ว)
+CTRL -> S : open_for(user) · save_message(...)
+note right of S #F0F0F0
+  เปิดใบและบันทึกข้อความลง PSQL เสมอ ก่อนเช็คเพดานทุกตัว
+  S6 — ข้อความที่ส่งมาถูกเก็บไว้ ไม่หาย
+end note
+CTRL -> CTRL : ใบถูกพักหรือไม่ (เคส ②)
+
+CTRL -> Q : is_over_daily_limit(user)
+Q -> DB : sum_user_tokens_today(user_id)
+note right of DB
+  <b>sum_user_tokens_today</b>
+  input_tokens + output_tokens ของ ai_calls ในทุกใบของผู้แจ้งคนนี้
+  นับเฉพาะ kind = 'communicator' · วันนี้ตามเวลาไทย
+end note
+DB --> Q : ยอดของผู้แจ้งคนนี้วันนี้
+Q --> CTRL : ยอด >= user_daily_token_limit
+
+CTRL -> Q : is_over_system_daily_limit()
+Q -> DB : select_active_ai_config()
+DB --> Q : system_daily_token_limit
+Q -> DB : sum_system_tokens_today()
+note right of DB
+  <b>sum_system_tokens_today</b>
+  input_tokens + output_tokens ของ ai_calls ทุกแถว ทุกผู้แจ้ง
+  นับเฉพาะ kind = 'communicator' · วันนี้ตามเวลาไทย
+  แถวที่ไม่มีจำนวน token นับเป็นศูนย์
+end note
+DB --> Q : ยอดของทั้งระบบวันนี้
+Q --> CTRL : ยอด >= system_daily_token_limit
+
+alt เกินเพดานต่อคน หรือ เกินเพดานทั้งระบบ
+  CTRL -> Q : limit_reached_message()
+  CTRL -> CL : reply(reply token ของข้อความนี้, [ข้อความแข็ง])
+  CL --> LINE : "วันนี้คุยกันครบโควตาแล้วค่ะ ..."
+  note over CTRL, CL #F0F0F0
+    จบตรงนี้ — ไม่เช็คเพดาน buffer · ไม่ต่อ buffer · ไม่แตะ state · ไม่ใส่ใบสั่งงาน
+    ใบไม่ค้าง · ตัวกวาดปิดใบเมื่อเงียบครบเวลา แล้วตัววิเคราะห์ทำรายงานตามปกติ
+  end note
+else ยังไม่เกินทั้งสองเพดาน
+  CTRL -> CTRL : เช็คเพดาน buffer (เคส ②) แล้วคุยตามเดิม
+end
+
+note over LINE, CL #F0F0F0
+  รู้จำนวน token หลังตัวคุยตอบเสร็จเท่านั้น — รอบคุยที่กำลังเกิดตอนยอดถึงเพดานพอดีใช้เกินได้รอบละหนึ่งใบ
+  ตัววิเคราะห์ไม่ถูกนับในเพดานทั้งสอง จึงทำรายงานได้แม้วันนั้นเพดานเต็มแล้ว
+  เปลี่ยนเพดาน = เพิ่มแถว ai_configs แล้วเลือกแถวนั้น (#242)
+end note
+
+note over LINE, CL #F0F0F0
+  <b>ai_configs</b>
+  user_daily_token_limit bigint ค่าตั้งต้น 500,000
+  system_daily_token_limit bigint ค่าตั้งต้น 5,000,000
+end note
+@enduml

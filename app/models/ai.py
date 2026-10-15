@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 class AiConfig(BaseModel):
     """ai_configs แถวที่ใช้ (is_active) — ชุด model + prompt ของตัวคุยและตัววิเคราะห์
-    + เพดาน token ต่อผู้แจ้งต่อวัน + เพดานข้อความใน buffer ต่อใบ"""
+    + เพดาน token ต่อผู้แจ้งต่อวัน + เพดานข้อความใน buffer ต่อใบ + เพดาน token ทั้งระบบต่อวัน"""
     ai_config_id: UUID
     chat_model_id: UUID
     chat_prompt_id: UUID
@@ -13,6 +13,7 @@ class AiConfig(BaseModel):
     analyzer_prompt_id: UUID
     user_daily_token_limit: int
     session_buffer_limit: int
+    system_daily_token_limit: int
 
 
 class AiModel(BaseModel):

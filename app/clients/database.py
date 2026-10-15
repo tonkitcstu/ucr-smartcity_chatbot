@@ -99,15 +99,28 @@ async def select_line_user_id(session_id: UUID) -> str:
 
 
 async def sum_user_tokens_today(user_id: UUID) -> int:
-    """token (input + output) ของ ai_calls ทุกใบของผู้แจ้งคนนี้ ตัวคุยและตัววิเคราะห์ · วันนี้ตามเวลาไทย · แถวที่ไม่มีจำนวนนับเป็น 0"""
+    """token (input + output) ของ ai_calls ทุกใบของผู้แจ้งคนนี้ เฉพาะตัวคุย · วันนี้ตามเวลาไทย · แถวที่ไม่มีจำนวนนับเป็น 0"""
     return await pool.fetchval(
         """
         SELECT coalesce(sum(coalesce(c.input_tokens, 0) + coalesce(c.output_tokens, 0)), 0)
         FROM ai_calls c JOIN sessions s USING (session_id)
         WHERE s.user_id = $1
+          AND c.kind = 'communicator'
           AND (c.created_at AT TIME ZONE 'Asia/Bangkok')::date = (now() AT TIME ZONE 'Asia/Bangkok')::date
         """,
         user_id,
+    )
+
+
+async def sum_system_tokens_today() -> int:
+    """token (input + output) ของ ai_calls ทุกแถวของผู้แจ้งทุกคน เฉพาะตัวคุย · วันนี้ตามเวลาไทย · แถวที่ไม่มีจำนวนนับเป็น 0"""
+    return await pool.fetchval(
+        """
+        SELECT coalesce(sum(coalesce(input_tokens, 0) + coalesce(output_tokens, 0)), 0)
+        FROM ai_calls
+        WHERE kind = 'communicator'
+          AND (created_at AT TIME ZONE 'Asia/Bangkok')::date = (now() AT TIME ZONE 'Asia/Bangkok')::date
+        """
     )
 
 
@@ -128,7 +141,7 @@ async def select_active_ai_config() -> AiConfig:
     row = await pool.fetchrow(
         """
         SELECT ai_config_id, chat_model_id, chat_prompt_id, analyzer_model_id, analyzer_prompt_id,
-               user_daily_token_limit, session_buffer_limit
+               user_daily_token_limit, session_buffer_limit, system_daily_token_limit
         FROM ai_configs WHERE is_active
         """
     )

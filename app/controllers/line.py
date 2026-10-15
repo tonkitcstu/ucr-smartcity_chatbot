@@ -58,7 +58,7 @@ async def on_message(event: MessageEvent) -> None:
         await session.skip(current, message)
         await line.reply(event.reply_token, [quota.suspended_message()])
         return
-    if await quota.is_over_daily_limit(found):
+    if await quota.is_over_daily_limit(found) or await quota.is_over_system_daily_limit():
         await line.reply(event.reply_token, [quota.limit_reached_message()])
         return
     if await quota.is_buffer_full(current):

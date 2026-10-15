@@ -61,10 +61,12 @@ CREATE TABLE ai_configs (
     analyzer_model_id  uuid NOT NULL REFERENCES models (model_id),
     analyzer_prompt_id uuid NOT NULL REFERENCES prompts (prompt_id),
     is_active          boolean NOT NULL DEFAULT false,
-    -- เพดาน token (input + output) ที่ผู้แจ้งหนึ่งคนใช้ได้ต่อวันตามเวลาไทย · รวมตัวคุยและตัววิเคราะห์ (#239)
-    user_daily_token_limit bigint NOT NULL DEFAULT 2000000,
+    -- เพดาน token (input + output) ที่ผู้แจ้งหนึ่งคนใช้ได้ต่อวันตามเวลาไทย · นับเฉพาะตัวคุย (#239)
+    user_daily_token_limit bigint NOT NULL DEFAULT 500000,
     -- เพดานข้อความที่บอทยังไม่ได้ตอบใน buffer ของใบหนึ่ง · ข้อความที่เกินพักใบ 24 ชั่วโมง (#239)
     session_buffer_limit integer NOT NULL DEFAULT 30,
+    -- เพดาน token (input + output) ที่ผู้แจ้งทุกคนรวมกันใช้ได้ต่อวันตามเวลาไทย · นับเฉพาะตัวคุย (#239)
+    system_daily_token_limit bigint NOT NULL DEFAULT 5000000,
     created_at         timestamptz NOT NULL DEFAULT now()
 );
 

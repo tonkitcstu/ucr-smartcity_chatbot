@@ -827,3 +827,57 @@ async def test_chat_uses_the_active_config_not_the_newest_row(client, db, redis,
     assert model == CHAT_MODEL
     assert messages[0].content == CHAT_PROMPT
     assert await db.fetchval("SELECT ai_config_id FROM ai_calls") == ai_config
+
+
+# --- #239 ② เพดานข้อความใน buffer ต่อใบ — spec ใน #239 · แบบ docs/designs/09-modules/239-buffer-limit.puml ---
+
+
+async def suspend(db, redis, session_id):
+    """จำลอง controller พักใบ (239-buffer-limit): ข้อความของใบเป็น skipped · ล้าง buffer · state เป็น SUSPENDED 24 ชั่วโมง"""
+    await db.execute("UPDATE messages SET status = 'skipped' WHERE session_id = $1", session_id)
+    await redis.delete(f"session:{session_id}:buffer")
+    await redis.set(f"session:{session_id}:state", "SUSPENDED", ex=24 * 60 * 60)
+
+
+async def test_job_of_suspended_session_ends_without_ai(client, db, redis, outside, ai_calls, loadings, replies):
+    """239②-7. ใบสั่งงานจากข้อความแรกยังรอเงียบ แล้วใบถูกพัก → worker จบงาน: ไม่เรียก AI · ไม่แสดง loading · ไม่ reply
+    ไม่บันทึกคำตอบบอท · state ยังเป็น SUSPENDED"""
+    await accept_pdpa(client)
+    await post_webhook(client, text_event("น้ำท่วมหน้าบ้าน", user_id="U_a", reply_token="rt-1", event_id="ev-1"))
+    session_id = await db.fetchval("SELECT session_id FROM sessions WHERE status = 'open'")
+    await suspend(db, redis, session_id)
+
+    await run_next_job(redis)
+
+    assert ai_calls == []
+    assert loadings == []
+    assert replies == []
+    assert await db.fetchval("SELECT count(*) FROM messages WHERE role = 'assistant'") == 0
+    assert await redis.get(f"session:{session_id}:state") == "SUSPENDED"
+
+
+async def test_suspended_while_ai_answers_still_replies_and_stays_suspended(
+    client, db, redis, outside, ai_calls, replies, monkeypatch
+):
+    """239②-8. ใบถูกพักระหว่าง AI กำลังตอบ → บอท reply รอบนั้นตามปกติ · ข้อความของรอบนั้นเป็น answered
+    state ยังเป็น SUSPENDED"""
+    from app.clients import ai
+
+    await accept_pdpa(client)
+    await post_webhook(client, text_event("น้ำท่วมหน้าบ้าน", user_id="U_a", reply_token="rt-1", event_id="ev-1"))
+    session_id = await db.fetchval("SELECT session_id FROM sessions WHERE status = 'open'")
+    answer_from_ai = ai.chat  # AI ปลอมของ ai_calls
+
+    async def suspended_meanwhile(model, messages, schema):
+        await suspend(db, redis, session_id)
+        return await answer_from_ai(model, messages, schema)
+
+    monkeypatch.setattr(ai, "chat", suspended_meanwhile)
+
+    await run_next_job(redis)
+
+    [(reply_token, messages)] = replies
+    assert reply_token == "rt-1"
+    assert [message.text for message in messages] == [ANSWER]
+    assert await db.fetchval("SELECT status FROM messages WHERE line_event_id = 'ev-1'") == "answered"
+    assert await redis.get(f"session:{session_id}:state") == "SUSPENDED"

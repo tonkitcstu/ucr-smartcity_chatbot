@@ -487,3 +487,24 @@ async def test_report_carries_its_pin(client, db, ai_config, tmp_path):
 
     pins = {item["report_id"]: (item["lat"], item["lng"]) for item in response.json()}
     assert pins == {str(pinned): (35.67966, 139.73669), str(plain): (None, None)}
+
+
+# --- #239 ② เพดานข้อความใน buffer ต่อใบ — spec ใน #239 · แบบ docs/designs/09-modules/239-buffer-limit.puml ---
+
+
+async def test_transcript_keeps_skipped_messages(client, db, tmp_path):
+    """239②-13. ใบมีข้อความ skipped → แดชบอร์ดเห็นทุกข้อความรวมข้อความ skipped ตามลำดับเวลา (S23)"""
+    talk = await conversation(
+        db,
+        tmp_path,
+        ("user", "text", "สแปม"),
+        ("user", "image", b"spam"),
+        ("user", "text", "น้ำท่วมหน้าบ้าน"),
+        ("assistant", "text", "ท่วมสูงประมาณไหนคะ"),
+    )
+    await db.execute("UPDATE messages SET status = 'skipped' WHERE message_id = ANY($1::uuid[])", talk.message_ids[:2])
+
+    response = await client.get(f"{TRANSCRIPTS}/{talk.session_id}", headers=bearer())
+
+    assert response.status_code == 200
+    assert [m["message_id"] for m in response.json()] == [str(message_id) for message_id in talk.message_ids]

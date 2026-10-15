@@ -255,3 +255,36 @@ async def test_sweep_with_no_sessions_does_nothing(client, db, redis):
 
     assert await db.fetchval("SELECT count(*) FROM sessions") == 0
     assert await jobs(redis) == []
+
+
+# --- #239 ② เพดานข้อความใน buffer ต่อใบ — spec ใน #239 · แบบ docs/designs/09-modules/239-buffer-limit.puml ---
+
+
+async def test_sweep_skips_suspended_session(client, db, redis):
+    """239②-9. ใบเป็น SUSPENDED และเงียบเกิน 10 นาที → ข้าม: ยัง open · ไม่มีงาน · state ยังเป็น SUSPENDED"""
+    session_id = await talked_and_answered(client, db, redis)
+    await redis.set(f"session:{session_id}:state", "SUSPENDED", ex=24 * 60 * 60)
+    await silent_for(db, session_id, 11)
+
+    await sweep()
+
+    await assert_skipped(db, redis, session_id, "SUSPENDED")
+
+
+async def test_session_suspended_while_closing_stays_suspended(client, db, redis, replies):
+    """239②-10. ใบเป็น CLOSING แล้วข้อความที่เกินเพดานเข้ามา → ปิดไม่สำเร็จ · ยัง open · state ยังเป็น SUSPENDED
+    ไม่มีงานคุย"""
+    session_id = await talked_and_answered(client, db, redis)
+    await silent_for(db, session_id, 11)
+    await redis.set(f"session:{session_id}:state", "CLOSING")  # sweeper ได้ใบนี้ไปปิดแล้ว
+    limit = await db.fetchval("SELECT session_buffer_limit FROM ai_configs WHERE is_active")
+
+    for n in range(limit + 1):  # ข้อความสุดท้ายเกินเพดาน
+        await post_webhook(client, text_event(f"ข้อความที่ {n}", user_id="U_a", event_id=f"ev-x{n}", message_id=f"m-x{n}"))
+    assert await redis.get(f"session:{session_id}:state") == "SUSPENDED"
+
+    await finish_closing(db, session_id)
+
+    assert await status_of(db, session_id) == "open"
+    assert await redis.get(f"session:{session_id}:state") == "SUSPENDED"
+    assert await jobs(redis) == []

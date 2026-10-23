@@ -12,7 +12,7 @@ from app.models.attachment import Attachment
 from app.models.context import ContextMessage
 from app.models.line import IncomingMessage
 from app.models.message import Message, TranscriptMessage
-from app.models.report import ReportRow
+from app.models.report import ReportDraft, ReportRow
 from app.models.session import Session
 from app.models.user import User
 
@@ -247,22 +247,28 @@ async def select_transcript(session_id: UUID) -> list[TranscriptMessage]:
     return [TranscriptMessage(**row) for row in rows]
 
 
+# ช่องที่ AI ร่างมาเก็บตามนั้น · lat/lng แปลงจากเลขป้ายแล้ว · started_at = เวลาเปิดใบ
 async def insert_report(
-    session_id: UUID, ai_config_id: UUID, desc: str, tags: list[str], lat: float | None, lng: float | None
+    session_id: UUID, ai_config_id: UUID, draft: ReportDraft, lat: float | None, lng: float | None
 ) -> UUID:
-    """started_at = เวลาเปิดใบ"""
     return await pool.fetchval(
         """
-        INSERT INTO reports (session_id, ai_config_id, tags, lat, lng, "desc", started_at)
-        SELECT $1, $2, $3, $4, $5, $6, started_at FROM sessions WHERE session_id = $1
+        INSERT INTO reports
+            (session_id, ai_config_id, tags, lat, lng, "desc", severity, affected_groups, time_periods, place,
+             started_at)
+        SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, started_at FROM sessions WHERE session_id = $1
         RETURNING report_id
         """,
         session_id,
         ai_config_id,
-        tags,
+        draft.tags,
         lat,
         lng,
-        desc,
+        draft.desc,
+        draft.severity,
+        draft.affected_groups,
+        draft.time_periods,
+        draft.place,
     )
 
 
@@ -300,11 +306,12 @@ async def insert_active_ai_config(
         )
 
 
+# รายงานใหม่ → เก่า + รูปของแต่ละใบ · date นับวันตามเวลาไทย · tag ต้องตรงทั้งคำ
 async def select_reports(date: date | None, tag: str | None, limit: int) -> list[ReportRow]:
-    """รายงานใหม่ → เก่า + รูปของแต่ละใบ · date นับวันตามเวลาไทย · tag ต้องตรงทั้งคำ"""
     rows = await pool.fetch(
         """
-        SELECT r.report_id, r.session_id, s.user_id, r."desc", coalesce(r.tags, '{}') AS tags, r.lat, r.lng,
+        SELECT r.report_id, r.session_id, s.user_id, r."desc", coalesce(r.tags, '{}') AS tags,
+               r.severity, r.affected_groups, r.time_periods, r.place, r.lat, r.lng,
                coalesce(array_agg(a.attachment_id ORDER BY a.created_at) FILTER (WHERE a.attachment_id IS NOT NULL),
                         '{}') AS attachment_ids,
                r.started_at, r.created_at
@@ -326,3 +333,4 @@ async def select_reports(date: date | None, tag: str | None, limit: int) -> list
 
 async def select_attachment_path(attachment_id: UUID) -> str | None:
     return await pool.fetchval("SELECT file_path FROM attachments WHERE attachment_id = $1", attachment_id)
+

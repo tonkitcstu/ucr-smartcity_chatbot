@@ -71,9 +71,13 @@ def chats(monkeypatch):
     return calls
 
 
+# ช่องที่เพิ่มทีหลัง (ความรุนแรง ใครได้รับผลกระทบ ช่วงเวลา ตำแหน่งตามคำ) · ข้อที่ไม่ได้ดูช่องพวกนี้ใช้ค่านี้
+NEW_FIELDS = {"severity": "medium", "affected_groups": [], "time_periods": [], "place": None}
+
+
+# คำตอบของ AI ตามรูปแบบ Analysis · ช่องใน NEW_FIELDS ที่ไม่ได้ใส่มาใช้ค่าใน NEW_FIELDS
 def answer(*reports):
-    """คำตอบของ AI ตามรูปแบบ Analysis"""
-    return json.dumps({"reports": list(reports)}, ensure_ascii=False)
+    return json.dumps({"reports": [{**NEW_FIELDS, **report} for report in reports]}, ensure_ascii=False)
 
 
 async def closed_session(db, *items):
@@ -203,6 +207,35 @@ async def test_text_image_location_become_one_report(client, db, ai_config, anal
     assert await status_of(db, session_id) == "analysed"
 
 
+# รายงานเก็บความรุนแรง ใครได้รับผลกระทบ ช่วงเวลา และตำแหน่งตามคำ ตามที่ AI ร่างมา
+async def test_report_keeps_severity_groups_times_and_place(client, db, ai_config, analyser_ai):
+    session_id, _ = await closed_session(
+        db, ("user", "text", "ทางเดินหน้าวัดไม่มีร่มเงาเลย ยายเดินไปตลาดทุกเช้าร้อนจนเป็นลม")
+    )
+    analyser_ai.replies = [
+        answer(
+            {
+                "desc": "ทางเดินหน้าวัดไม่มีร่มเงา ผู้สูงอายุเดินไปตลาดตอนเช้าร้อนจนเป็นลม",
+                "tags": ["ความร้อน", "ทางเดิน"],
+                "severity": "high",
+                "affected_groups": ["elderly", "pedestrians"],
+                "time_periods": ["morning"],
+                "place": "ทางเดินหน้าวัด",
+                "location": None,
+                "images": [],
+            }
+        )
+    ]
+
+    await run_analyse(session_id)
+
+    [report] = await reports_of(db, session_id)
+    assert report["severity"] == "high"
+    assert report["affected_groups"] == ["elderly", "pedestrians"]
+    assert report["time_periods"] == ["morning"]
+    assert report["place"] == "ทางเดินหน้าวัด"
+
+
 # A. AI ตอบถูกรูปแบบ — แต่ละรายงานมีรูปไหม (T/F) มีตำแหน่งไหม (T/F)
 
 ONE_REPORT = [[shape] for shape in product([False, True], repeat=2)]
@@ -285,7 +318,7 @@ async def test_dispute_between_people_makes_no_report(client, db, ai_config, ana
 # B. AI ตอบผิดรูปแบบ — แกะไม่ผ่าน → ai_calls error · ลองใหม่ด้วยบทสนทนาชุดเดิม
 
 RIGHT = answer({"desc": "ขยะล้นถังหน้าตลาด", "tags": ["ขยะ"], "location": None, "images": []})
-REPORT = {"desc": "ขยะล้นถัง", "tags": ["ขยะ"], "location": None, "images": []}
+REPORT = {**NEW_FIELDS, "desc": "ขยะล้นถัง", "tags": ["ขยะ"], "location": None, "images": []}
 WRONG = {
     "B1-not-json": "ขอโทษครับ ผมสรุปไม่ได้",
     "B2-cut-off": '{"reports": [{"desc": "ขยะล้น',
@@ -296,6 +329,9 @@ WRONG = {
     "B7-no-location-key": json.dumps({"reports": [{k: v for k, v in REPORT.items() if k != "location"}]}),
     "B8-location-is-word": json.dumps({"reports": [{**REPORT, "location": "หน้าบ้าน"}]}),
     "B9-images-not-numbers": json.dumps({"reports": [{**REPORT, "images": ["photo.jpg"]}]}),
+    "B10-severity-not-a-level": json.dumps({"reports": [{**REPORT, "severity": "มาก"}]}),
+    "B11-unknown-group": json.dumps({"reports": [{**REPORT, "affected_groups": ["คนแก่"]}]}),
+    "B12-unknown-time": json.dumps({"reports": [{**REPORT, "time_periods": ["ตอนเช้า"]}]}),
 }
 
 

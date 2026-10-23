@@ -19,7 +19,7 @@ async def save(
     for draft in drafts:
         pin = locations[draft.location - 1] if draft.location else None
         lat, lng = (pin.lat, pin.lng) if pin else (None, None)
-        report_id = await database.insert_report(session_id, config.ai_config_id, draft.desc, draft.tags, lat, lng)
+        report_id = await database.insert_report(session_id, config.ai_config_id, draft, lat, lng)
         await database.link_attachments(report_id, [images[n - 1].attachment_id for n in draft.images])
 
 

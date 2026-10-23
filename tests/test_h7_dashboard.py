@@ -114,8 +114,9 @@ async def report(
     """รายงานหนึ่งใบของใบ talk · ผูกรูปตาม attachment_ids · pin = (lat, lng)"""
     report_id = await db.fetchval(
         """
-        INSERT INTO reports (session_id, ai_config_id, tags, "desc", started_at, created_at, lat, lng)
-        SELECT $1, $2, $3, $4, started_at, coalesce($5::timestamptz, now()), $6, $7 FROM sessions WHERE session_id = $1
+        INSERT INTO reports (session_id, ai_config_id, tags, "desc", severity, started_at, created_at, lat, lng)
+        SELECT $1, $2, $3, $4, 'medium', started_at, coalesce($5::timestamptz, now()), $6, $7
+        FROM sessions WHERE session_id = $1
         RETURNING report_id
         """,
         talk.session_id,
@@ -216,6 +217,27 @@ async def test_report_fields_match_database(client, db, ai_config, tmp_path):
     ]
     assert datetime.fromisoformat(item["started_at"]) == row["started_at"]
     assert datetime.fromisoformat(item["created_at"]) == row["created_at"]
+
+
+# ช่องที่ตัววิเคราะห์ประเมิน: ความรุนแรง ใครได้รับผลกระทบ ช่วงเวลา ตำแหน่งตามคำ · ตรงกับในฐาน
+async def test_report_has_severity_groups_times_and_place(client, db, ai_config, tmp_path):
+    report_id = await simple_report(db, ai_config, tmp_path)
+    await db.execute(
+        """
+        UPDATE reports SET severity = 'high', affected_groups = '{elderly,pedestrians}',
+                           time_periods = '{morning,midday}', place = 'ทางเดินหน้าวัด'
+        WHERE report_id = $1
+        """,
+        report_id,
+    )
+
+    response = await client.get(REPORTS, headers=bearer())
+
+    [item] = response.json()
+    assert item["severity"] == "high"
+    assert item["affected_groups"] == ["elderly", "pedestrians"]
+    assert item["time_periods"] == ["morning", "midday"]
+    assert item["place"] == "ทางเดินหน้าวัด"
 
 
 async def test_times_are_in_thai_time(client, db, ai_config, tmp_path):

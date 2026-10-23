@@ -42,7 +42,8 @@ WORKER_ENABLED = os.getenv("WORKER_ENABLED", "true").strip().lower() in ("1", "t
 UPLOADS_DIR = Path(os.getenv("UPLOADS_DIR") or BASE_DIR / "uploads")
 
 # sweeper: ปิดใบที่เงียบเกินกี่นาที · กวาดทุกกี่วินาที · เปิดด้วย WORKER_ENABLED ตัวเดียวกับ worker
-CLOSE_AFTER_MINUTES = _int("CLOSE_AFTER_MINUTES", 10)
+# 2 ชั่วโมง (Idea 2026-10-23) · ใบปิดแล้วตัววิเคราะห์จึงเริ่ม รายงานขึ้นแดชบอร์ดหลังเงียบครบเวลานี้
+CLOSE_AFTER_MINUTES = _int("CLOSE_AFTER_MINUTES", 120)
 SWEEP_EVERY_SECONDS = _int("SWEEP_EVERY_SECONDS", 60)
 
 SECRET_KEY = os.getenv("SECRET_KEY")

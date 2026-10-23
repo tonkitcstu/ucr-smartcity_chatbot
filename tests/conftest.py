@@ -20,6 +20,8 @@ os.environ["REDIS_URL"] = TEST_REDIS_URL
 # worker ไม่วนเองใน test — test หยิบงานแล้วเรียก run_chat เอง (H4)
 os.environ["WORKER_ENABLED"] = "false"
 os.environ["SILENCE_SECONDS"] = "0.3"
+# test ของตัวกวาดใบเขียนตามเวลาปิดใบ 10 นาที · ค่าจริงเป็น 120 (2026-10-23)
+os.environ["CLOSE_AFTER_MINUTES"] = "10"
 os.environ["UPLOADS_DIR"] = tempfile.mkdtemp(prefix="ucr-uploads-")
 # กุญแจ JWT ของ test — ไม่ใช้ของจริงใน .env (H7)
 os.environ["SECRET_KEY"] = "test-secret-key-shared-with-dashboard-team"

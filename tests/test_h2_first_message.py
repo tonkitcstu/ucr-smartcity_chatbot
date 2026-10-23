@@ -5,11 +5,7 @@ import json
 
 import pytest
 
-from tests.line_webhook import image_event, post_webhook, postback_event, text_event
-
-
-async def accept_pdpa(client, user_id="U_a"):
-    await post_webhook(client, postback_event("pdpa_accept", user_id=user_id, event_id="ev-accept"))
+from tests.line_webhook import accept_pdpa, image_event, post_webhook, text_event
 
 
 async def open_sessions(db):
@@ -220,7 +216,7 @@ async def test_tokens_from_yesterday_are_not_counted(client, db, redis, replies,
 async def test_tokens_of_another_reporter_are_not_counted(client, db, redis, replies, daily_limit):
     """239-4. token ของผู้แจ้งคนอื่นเกินเพดาน → ไม่นับ — ทางเดิม"""
     await accept_pdpa(client, user_id="U_a")
-    await post_webhook(client, postback_event("pdpa_accept", user_id="U_b", event_id="ev-accept-b"))
+    await accept_pdpa(client, user_id="U_b", event_id="ev-accept-b")
     await spend(db, "U_b", 500, 0)
 
     await post_webhook(client, text_event("น้ำท่วมหน้าบ้าน", user_id="U_a", event_id="ev-1"))
@@ -474,7 +470,7 @@ async def system_limit(client, db):
 
 
 async def accept_pdpa_for_another_reporter(client):
-    await post_webhook(client, postback_event("pdpa_accept", user_id="U_b", event_id="ev-accept-b"))
+    await accept_pdpa(client, user_id="U_b", event_id="ev-accept-b")
 
 
 async def test_under_system_token_limit_goes_the_usual_way(client, db, redis, replies, system_limit):

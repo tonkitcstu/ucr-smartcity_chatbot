@@ -6,6 +6,7 @@ import json
 import pytest
 
 from tests.line_webhook import (
+    accept_pdpa,
     MESSAGE_STICKER_KEYWORDS,
     MESSAGE_STICKER_TEXT,
     PIN,
@@ -16,14 +17,9 @@ from tests.line_webhook import (
     image_event,
     location_event,
     post_webhook,
-    postback_event,
     sticker_event,
     text_event,
 )
-
-
-async def accept_pdpa(client, user_id="U_a"):
-    await post_webhook(client, postback_event("pdpa_accept", user_id=user_id, event_id="ev-accept"))
 
 
 async def open_sessions(db):

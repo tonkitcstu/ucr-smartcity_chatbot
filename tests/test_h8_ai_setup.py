@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from tests.line_webhook import post_webhook, postback_event, text_event
+from tests.line_webhook import accept_pdpa, post_webhook, text_event
 
 live_ai = pytest.mark.skipif(os.getenv("LIVE_AI") != "1", reason="ยิง Gemini จริงเฉพาะ LIVE_AI=1")
 
@@ -111,7 +111,7 @@ async def test_first_chat_uses_default_chat_prompt(empty_ai_tables, client, db, 
     monkeypatch.setattr(ai, "chat", fake_chat)
     monkeypatch.setattr(line, "show_loading", fake_show_loading)
 
-    await post_webhook(client, postback_event("pdpa_accept", user_id="U_a", event_id="ev-accept"))
+    await accept_pdpa(client)
     await post_webhook(client, text_event("น้ำท่วมหน้าบ้าน", user_id="U_a", event_id="ev-1"))
     await worker.run_chat(Job.model_validate_json(await redis.lpop("jobs")))
 
@@ -284,7 +284,7 @@ async def test_switching_rows_takes_effect_on_the_next_chat(empty_ai_tables, cli
     second = await add_config(db, "second")
 
     await choose(db, first)
-    await post_webhook(client, postback_event("pdpa_accept", user_id="U_a", event_id="ev-accept"))
+    await accept_pdpa(client)
     await post_webhook(client, text_event("น้ำท่วมหน้าบ้าน", user_id="U_a", event_id="ev-1"))
     await worker.run_chat(Job.model_validate_json(await redis.lpop("jobs")))
 

@@ -111,3 +111,11 @@ async def post_webhook(client, *events, signature=None):
     body = webhook_body(*events)
     headers = {"X-Line-Signature": signature or sign(body), "Content-Type": "application/json"}
     return await client.post("/webhook/line", content=body, headers=headers)
+
+
+# กดยอมรับ PDPA · บอทตอบข้อความต้อนรับ (2026-10-23) ซึ่งข้อที่ใช้ตัวช่วยนี้ไม่ได้ดู จึงเอาออกจาก replies ที่จดไว้
+async def accept_pdpa(client, user_id="U_a", event_id="ev-accept"):
+    from app.clients import line
+
+    await post_webhook(client, postback_event("pdpa_accept", user_id=user_id, event_id=event_id))
+    line.reply.calls.pop()

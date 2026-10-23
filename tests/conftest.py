@@ -70,7 +70,8 @@ async def client(db, redis):
             yield c
 
 
-@pytest.fixture
+# autouse: ทุกข้อกดยอมรับ PDPA แล้วบอทตอบข้อความต้อนรับ (2026-10-23) จึงต้องไม่มีข้อไหนยิงไป LINE จริง
+@pytest.fixture(autouse=True)
 def replies(monkeypatch):
     """แทน clients/line.reply — จดว่าถูกเรียกด้วยอะไร ไม่ยิงไป LINE"""
     from app.clients import line
@@ -80,5 +81,7 @@ def replies(monkeypatch):
     async def fake_reply(reply_token, messages):
         calls.append((reply_token, messages))
 
+    # ตัวช่วย accept_pdpa ใน tests/line_webhook.py เข้าถึงรายการนี้ผ่าน line.reply.calls
+    fake_reply.calls = calls
     monkeypatch.setattr(line, "reply", fake_reply)
     return calls

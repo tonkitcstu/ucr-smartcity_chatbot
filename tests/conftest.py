@@ -45,7 +45,8 @@ def schema():
 @pytest.fixture
 async def db():
     conn = await asyncpg.connect(TEST_DATABASE_URL)
-    await conn.execute("TRUNCATE users RESTART IDENTITY CASCADE")
+    # broadcasts ไม่ได้ผูกกับ users ต้องล้างเอง
+    await conn.execute("TRUNCATE users, broadcasts RESTART IDENTITY CASCADE")
     yield conn
     await conn.close()
 

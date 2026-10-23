@@ -1,0 +1,59 @@
+{
+  "date": "2026-10-23",
+  "WeatherForecasts": [
+    {
+      "name": "ชุมชนตัวอย่าง",
+      "location": {
+        "province": null,
+        "district": null,
+        "subdistrict": null,
+        "region": null,
+        "geocode": null,
+        "lat": null,
+        "lon": null
+      },
+      "forecasts": [
+        {
+          "time": "2026-10-23T13:00:00+07:00",
+          "temperature": 33.4,
+          "rainfall": 0,
+          "condition_label": "มีเมฆบางส่วน",
+          "humidity": 66.0,
+          "wind_speed": 2.0,
+          "wind_direction": 180.0,
+          "condition": 2
+        },
+        {
+          "time": "2026-10-23T14:00:00+07:00",
+          "temperature": 31.5,
+          "rainfall": 2.0,
+          "condition_label": "มีฝน",
+          "humidity": 82.0,
+          "wind_speed": 3.0,
+          "wind_direction": 200.0,
+          "condition": 5
+        },
+        {
+          "time": "2026-10-23T15:00:00+07:00",
+          "temperature": 30.1,
+          "rainfall": 4.5,
+          "condition_label": "มีฝน",
+          "humidity": 88.0,
+          "wind_speed": 3.5,
+          "wind_direction": 210.0,
+          "condition": 5
+        },
+        {
+          "time": "2026-10-23T16:00:00+07:00",
+          "temperature": 30.4,
+          "rainfall": 0,
+          "condition_label": "มีเมฆมากขึ้น",
+          "humidity": 79.0,
+          "wind_speed": 2.5,
+          "wind_direction": 190.0,
+          "condition": 3
+        }
+      ]
+    }
+  ]
+}

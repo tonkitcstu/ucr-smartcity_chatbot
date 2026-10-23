@@ -16,6 +16,7 @@ from linebot.v3.messaging import (
     QuickReplyItem,
     ReplyMessageRequest,
     ShowLoadingAnimationRequest,
+    TextMessage,
 )
 
 from app.core.config import LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET
@@ -58,6 +59,14 @@ def build_quick_reply(buttons: list[QuickReplyButton]) -> QuickReply | None:
             QuickReplyItem(action=ACTIONS[button.type](label=button.label)) for button in buttons[:QUICK_REPLY_MAX]
         ]
     )
+
+
+# ข้อความละกล่องตามลำดับ · ปุ่มอยู่ใต้ข้อความสุดท้าย เพราะ LINE แสดงปุ่มของข้อความสุดท้ายเท่านั้น
+# ใช้ได้ทั้ง reply และ push
+def text_messages(texts: list[str], buttons: list[QuickReplyButton]) -> list[TextMessage]:
+    messages = [TextMessage(text=text) for text in texts[:-1]]
+    messages.append(TextMessage(text=texts[-1], quick_reply=build_quick_reply(buttons)))
+    return messages
 
 
 async def reply(reply_token: str, messages: list) -> None:

@@ -11,11 +11,30 @@ CREATE TABLE users (
     created_at       timestamptz NOT NULL DEFAULT now()
 );
 
+-- พยากรณ์อากาศที่อ่านวันละครั้งตอนตี 1 และการทักผู้แจ้งไปก่อนที่ตามมา · หนึ่งวันหนึ่งแถว
+-- แถวของวันนี้มีแล้ว = อ่านพยากรณ์แล้ว · หลาย process หรือแอปเปิดใหม่ก็ไม่อ่านซ้ำและไม่ทักซ้ำ
+CREATE TABLE broadcasts (
+    broadcast_id  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    -- วันตามเวลาไทยที่พยากรณ์พูดถึง
+    forecast_date date NOT NULL UNIQUE,
+    -- คำตอบดิบของพยากรณ์อากาศทั้งก้อน
+    forecast      jsonb NOT NULL,
+    -- เหตุที่ทัก ส่งให้ตัวคุยใช้แต่งข้อความ เช่น ฝนจะตกช่วงบ่าย · null = วันนี้ไม่มีเหตุให้ทัก
+    reason        text,
+    -- skipped = ไม่มีเหตุให้ทัก · scheduled = รอทัก หรือทักยังไม่ครบทุกคน · sent = ทักครบแล้ว
+    -- expired = เลยเวลาที่ทักได้ของวันนั้นแล้ว เช่น แอปดับไปทั้งวัน
+    status        text NOT NULL CHECK (status IN ('skipped', 'scheduled', 'sent', 'expired')),
+    sent_at       timestamptz,
+    created_at    timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE sessions (
     session_id      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id         uuid NOT NULL REFERENCES users (user_id) ON DELETE CASCADE,
     status          text NOT NULL DEFAULT 'open'
                     CHECK (status IN ('open', 'closed', 'analysed', 'analyse_failed')),
+    -- ใบที่บอททักไปก่อน · null = ผู้แจ้งทักมาเอง
+    broadcast_id    uuid REFERENCES broadcasts (broadcast_id),
     started_at      timestamptz NOT NULL DEFAULT now(),
     last_message_at timestamptz NOT NULL DEFAULT now(),
     closed_at       timestamptz
@@ -23,6 +42,10 @@ CREATE TABLE sessions (
 
 -- หนึ่งผู้แจ้งมีใบเปิดได้ใบเดียว — ข้อความสองอันมาพร้อมกันต้องได้ใบเดียว
 CREATE UNIQUE INDEX sessions_one_open_per_user ON sessions (user_id) WHERE status = 'open';
+
+-- การทักแต่ละวันได้ใบเดียวต่อผู้แจ้ง · แอปดับกลางการทักแล้วทักต่อ คนที่ได้ไปแล้วไม่ถูกทักซ้ำ
+-- แม้เขาตอบจบจนใบถูกปิดไปแล้ว หรือมีหลาย process ทักพร้อมกัน
+CREATE UNIQUE INDEX sessions_one_per_broadcast ON sessions (user_id, broadcast_id) WHERE broadcast_id IS NOT NULL;
 
 CREATE TABLE messages (
     message_id      uuid PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -74,9 +74,7 @@ async def answer_buffer(session_id: UUID, buffer: list[Message]) -> None:
     async with asyncio.timeout(AI_TIMEOUT_SECONDS):
         answer = await communicator.chat(session_id, config, messages)
 
-    replies = [TextMessage(text=text) for text in answer.texts[:-1]]
-    replies.append(TextMessage(text=answer.texts[-1], quick_reply=line.build_quick_reply(answer.buttons)))
-    await line.reply(buffer[-1].reply_token, replies)
+    await line.reply(buffer[-1].reply_token, line.text_messages(answer.texts, answer.buttons))
     await session.finish(session_id, buffer, new_context, answer.texts)
 
 
@@ -105,7 +103,8 @@ async def run_analyse(job: Job) -> None:
     ใบที่มีแต่ข้อความ skipped (#239) → ใบ analysed ไม่เรียก AI ไม่มีรายงาน"""
     session_id = job.session_id
     transcript = await session.read_transcript_for_analysis(session_id)
-    if not transcript:
+    # ใบที่ผู้แจ้งไม่ได้พูดอะไรเลย เช่น บอททักไปก่อนแล้วเขาไม่ตอบ → ไม่มีเรื่องให้วิเคราะห์ ไม่เรียก AI
+    if not any(message.role == "user" for message in transcript):
         await session.mark_analysed(session_id)
         return
     config = await prompt.active_config()

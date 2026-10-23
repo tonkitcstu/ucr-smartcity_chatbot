@@ -63,6 +63,10 @@ entity reports {
   lat : float
   lng : float
   * desc : text
+  * severity : low | medium | high
+  * affected_groups : text[] (ใครได้รับผลกระทบ)
+  * time_periods : text[] (morning | midday | evening | night)
+  place : text (ตำแหน่งตามคำของผู้แจ้ง)
   * started_at : timestamptz
   * created_at : timestamptz
 }

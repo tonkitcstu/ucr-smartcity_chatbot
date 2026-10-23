@@ -76,15 +76,23 @@ CREATE TABLE ai_configs (
 CREATE UNIQUE INDEX ai_configs_one_active ON ai_configs (is_active) WHERE is_active;
 
 CREATE TABLE reports (
-    report_id    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    session_id   uuid NOT NULL REFERENCES sessions (session_id) ON DELETE CASCADE,
-    ai_config_id uuid NOT NULL REFERENCES ai_configs (ai_config_id),
-    tags         text[],
-    lat          double precision,
-    lng          double precision,
-    "desc"       text NOT NULL,
-    started_at   timestamptz NOT NULL,
-    created_at   timestamptz NOT NULL DEFAULT now()
+    report_id       uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id      uuid NOT NULL REFERENCES sessions (session_id) ON DELETE CASCADE,
+    ai_config_id    uuid NOT NULL REFERENCES ai_configs (ai_config_id),
+    tags            text[],
+    lat             double precision,
+    lng             double precision,
+    "desc"          text NOT NULL,
+    -- ความรุนแรงที่ตัววิเคราะห์ประเมินจากเรื่องที่ผู้แจ้งเล่า · ทีมใช้เลือกว่าเรื่องไหนควรทำก่อน
+    severity        text NOT NULL CHECK (severity IN ('low', 'medium', 'high')),
+    -- ใครได้รับผลกระทบ · ค่าที่ใส่ได้อยู่ที่ AffectedGroup ใน app/models/report.py
+    affected_groups text[] NOT NULL DEFAULT '{}',
+    -- ช่วงเวลาที่คนใช้ที่ตรงนั้นและเจอปัญหาจริง · ค่าที่ใส่ได้อยู่ที่ TimePeriod ใน app/models/report.py
+    time_periods    text[] NOT NULL DEFAULT '{}',
+    -- ตำแหน่งตามคำของผู้แจ้ง เช่น หน้าวัด ปากซอย 5 · ใช้ได้แม้ไม่ได้ปักหมุด
+    place           text,
+    started_at      timestamptz NOT NULL,
+    created_at      timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE attachments (

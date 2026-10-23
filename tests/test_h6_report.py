@@ -236,6 +236,26 @@ async def test_report_keeps_severity_groups_times_and_place(client, db, ai_confi
     assert report["place"] == "ทางเดินหน้าวัด"
 
 
+# บอททักไปก่อน → ข้อความแรกเป็นของบอท · ตัววิเคราะห์ได้บรรทัดของระบบนำหน้า ไม่ขึ้นต้นด้วย assistant
+async def test_bot_started_conversation_gets_a_note_first(client, db, ai_config, analyser_ai):
+    session_id, _ = await closed_session(
+        db,
+        ("assistant", "text", "วันนี้บ่าย ๆ อาจมีฝนนะคะ ฝนตกทีไรแถวบ้านเป็นยังไงบ้างคะ"),
+        ("user", "text", "น้ำท่วมหน้าบ้านทุกที"),
+    )
+    analyser_ai.replies = [answer()]
+
+    await run_analyse(session_id)
+
+    assert sent_to_ai(analyser_ai.calls[0]) == [
+        ("system", "text", ANALYSER_PROMPT),
+        ("user", "text", "[ระบบ: บทสนทนานี้เมืองทักผู้แจ้งไปก่อน]"),
+        ("assistant", "text", "วันนี้บ่าย ๆ อาจมีฝนนะคะ ฝนตกทีไรแถวบ้านเป็นยังไงบ้างคะ"),
+        ("user", "text", "น้ำท่วมหน้าบ้านทุกที"),
+        SESSION_EXPIRED,
+    ]
+
+
 # A. AI ตอบถูกรูปแบบ — แต่ละรายงานมีรูปไหม (T/F) มีตำแหน่งไหม (T/F)
 
 ONE_REPORT = [[shape] for shape in product([False, True], repeat=2)]

@@ -5,9 +5,9 @@ from fastapi import FastAPI
 
 from app.api import dashboard, health, line
 from app.clients import database, redis
-from app.core.config import WORKER_ENABLED
+from app.core.config import BROADCAST_ENABLED, WORKER_ENABLED
 from app.services import prompt
-from app.workers import sweeper, worker
+from app.workers import broadcaster, sweeper, worker
 
 
 @asynccontextmanager
@@ -21,6 +21,9 @@ async def lifespan(app: FastAPI):
         if WORKER_ENABLED
         else {}
     )
+    # ตัวทักไปก่อนมีสวิตช์ของตัวเอง เพราะเปิดแล้วส่งข้อความหาผู้แจ้งจริงทุกคน · ต้องมี worker ตอบเมื่อเขาตอบกลับ
+    if WORKER_ENABLED and BROADCAST_ENABLED:
+        app.state.background["broadcaster"] = asyncio.create_task(broadcaster.run())
     try:
         yield
     finally:

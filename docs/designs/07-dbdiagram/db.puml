@@ -18,11 +18,23 @@ entity users {
   * created_at : timestamptz
 }
 
+entity broadcasts {
+  * broadcast_id : uuid <<PK>>
+  --
+  * forecast_date : date <<unique>> (วันละแถว)
+  * forecast : jsonb (พยากรณ์ดิบ)
+  reason : text (เหตุที่ทัก · null = ไม่ทัก)
+  * status : skipped | scheduled | sent | expired
+  sent_at : timestamptz
+  * created_at : timestamptz
+}
+
 entity sessions {
   * session_id : uuid <<PK>>
   --
   * user_id : uuid <<FK>>
   * status : open | closed | analysed | analyse_failed
+  broadcast_id : uuid <<FK>> (null = ผู้แจ้งทักมาเอง · ผู้แจ้งได้ใบเดียวต่อการทัก)
   * started_at : timestamptz
   * last_message_at : timestamptz
   closed_at : timestamptz
@@ -118,6 +130,7 @@ entity prompts {
 }
 
 users ||--o{ sessions
+broadcasts |o--o{ sessions : บอททักไปก่อน
 sessions ||--o{ messages
 messages ||--o{ attachments
 sessions ||--o{ reports : 0..n ตัววิเคราะห์เลือก

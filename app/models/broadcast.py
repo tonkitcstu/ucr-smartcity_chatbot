@@ -1,0 +1,14 @@
+from datetime import date
+from typing import Literal
+from uuid import UUID
+
+from pydantic import BaseModel
+
+
+# แถวของวันหนึ่งใน broadcasts · ไม่มีคำตอบดิบของพยากรณ์ เพราะโค้ดไม่ได้ใช้ต่อ (เก็บไว้ให้คนเปิดดูในฐาน)
+class Broadcast(BaseModel):
+    broadcast_id: UUID
+    forecast_date: date
+    # เหตุที่ทัก · None = วันนี้ไม่มีเหตุให้ทัก
+    reason: str | None
+    status: Literal["skipped", "scheduled", "sent", "expired"]

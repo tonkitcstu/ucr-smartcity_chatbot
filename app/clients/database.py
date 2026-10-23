@@ -9,6 +9,7 @@ import asyncpg
 from app.core.config import DATABASE_URL
 from app.models.ai import AiConfig, AiModel, AiReply, Prompt
 from app.models.attachment import Attachment
+from app.models.broadcast import Broadcast
 from app.models.context import ContextMessage
 from app.models.line import IncomingMessage
 from app.models.message import Message, TranscriptMessage
@@ -206,14 +207,21 @@ async def mark_skipped(message_ids: list[UUID]) -> None:
     await pool.execute("UPDATE messages SET status = 'skipped' WHERE message_id = ANY($1::uuid[])", message_ids)
 
 
-async def select_silent_sessions(minutes: int) -> list[Session]:
-    """ใบ open ที่ไม่มีข้อความเข้ามาเกิน minutes นาที"""
+# ใบ open ที่ไม่มีข้อความเข้ามาเกิน minutes นาที
+# ใบที่บอททักไปก่อนและผู้แจ้งยังไม่ตอบสักข้อความ รอนานกว่า คือ broadcast_wait_hours ชั่วโมง
+async def select_silent_sessions(minutes: int, broadcast_wait_hours: int) -> list[Session]:
     rows = await pool.fetch(
         """
-        SELECT session_id, user_id FROM sessions
-        WHERE status = 'open' AND last_message_at < now() - make_interval(mins => $1)
+        SELECT s.session_id, s.user_id FROM sessions s
+        WHERE s.status = 'open' AND s.last_message_at < now() - make_interval(mins => $1)
+          AND (
+              s.broadcast_id IS NULL
+              OR EXISTS (SELECT 1 FROM messages m WHERE m.session_id = s.session_id AND m.role = 'user')
+              OR s.last_message_at < now() - make_interval(hours => $2)
+          )
         """,
         minutes,
+        broadcast_wait_hours,
     )
     return [Session(**row) for row in rows]
 
@@ -334,3 +342,59 @@ async def select_reports(date: date | None, tag: str | None, limit: int) -> list
 async def select_attachment_path(attachment_id: UUID) -> str | None:
     return await pool.fetchval("SELECT file_path FROM attachments WHERE attachment_id = $1", attachment_id)
 
+
+async def select_broadcast(day: date) -> Broadcast | None:
+    row = await pool.fetchrow(
+        "SELECT broadcast_id, forecast_date, reason, status FROM broadcasts WHERE forecast_date = $1", day
+    )
+    return Broadcast(**row) if row else None
+
+
+# จดพยากรณ์ของวันนั้น · มีเหตุให้ทัก → scheduled · ไม่มี → skipped
+# วันนั้นมีแถวแล้ว (อีก process จดไปก่อน) → คืนแถวเดิม ไม่เขียนทับ
+async def insert_broadcast(day: date, forecast: dict, reason: str | None) -> Broadcast:
+    row = await pool.fetchrow(
+        """
+        INSERT INTO broadcasts (forecast_date, forecast, reason, status)
+        VALUES ($1, $2::jsonb, $3, CASE WHEN $3::text IS NULL THEN 'skipped' ELSE 'scheduled' END)
+        ON CONFLICT (forecast_date) DO UPDATE SET forecast_date = EXCLUDED.forecast_date
+        RETURNING broadcast_id, forecast_date, reason, status
+        """,
+        day,
+        json.dumps(forecast, ensure_ascii=False),
+        reason,
+    )
+    return Broadcast(**row)
+
+
+async def mark_broadcast_sent(broadcast_id: UUID) -> None:
+    await pool.execute("UPDATE broadcasts SET status = 'sent', sent_at = now() WHERE broadcast_id = $1", broadcast_id)
+
+
+# scheduled → expired · แถวที่ทักครบแล้วไม่แตะ
+async def mark_broadcast_expired(broadcast_id: UUID) -> None:
+    await pool.execute(
+        "UPDATE broadcasts SET status = 'expired' WHERE broadcast_id = $1 AND status = 'scheduled'", broadcast_id
+    )
+
+
+# ผู้แจ้งทุกคนที่ยอมรับ PDPA แล้ว เรียงตามคนที่มาก่อน
+async def select_all_users() -> list[User]:
+    rows = await pool.fetch("SELECT user_id, line_user_id, pdpa_accepted_at FROM users ORDER BY created_at")
+    return [User(**row) for row in rows]
+
+
+# เปิดใบใหม่ที่ติดป้ายว่าบอททักไปก่อน · คำสั่งเดียว ชน index ตัวไหนก็ได้ None ไม่แตะใบเดิม
+#   ชน sessions_one_open_per_user = ผู้แจ้งมีใบเปิดอยู่แล้ว (กำลังคุยกันอยู่)
+#   ชน sessions_one_per_broadcast = ผู้แจ้งได้ใบของการทักครั้งนี้ไปแล้ว
+async def open_broadcast_session(user_id: UUID, broadcast_id: UUID) -> Session | None:
+    row = await pool.fetchrow(
+        """
+        INSERT INTO sessions (user_id, broadcast_id) VALUES ($1, $2)
+        ON CONFLICT DO NOTHING
+        RETURNING session_id, user_id
+        """,
+        user_id,
+        broadcast_id,
+    )
+    return Session(**row) if row else None

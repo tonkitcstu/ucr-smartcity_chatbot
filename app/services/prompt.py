@@ -15,6 +15,19 @@ SESSION_EXPIRED = "//leave chat because session expired"
 PIN_NOTE = "[ระบบ: ผู้แจ้งปักหมุดตำแหน่งแล้ว]"
 
 
+# บรรทัดแรกที่ตัววิเคราะห์เห็นเมื่อบทสนทนาเริ่มจากบอททักไปก่อน
+# บอกให้รู้ว่าข้อความแรกเป็นของบอท และ Gemini อาจไม่รับคำขอที่ขึ้นต้นด้วย assistant (แบบเดียวกับ #202)
+BOT_STARTED_NOTE = "[ระบบ: บทสนทนานี้เมืองทักผู้แจ้งไปก่อน]"
+
+
+# บรรทัดที่บอกตัวคุยว่าต้องเป็นฝ่ายทักไปก่อน และทักเพราะอะไร · หัวข้อ "ทักไปก่อน" ใน prompt ของตัวคุยอธิบายวิธีทัก
+# เก็บไว้ในประวัติของใบด้วย ผู้แจ้งตอบกลับมาแล้วตัวคุยยังเห็นว่าตัวเองทักไปเพราะอะไร
+def broadcast_note(reason: str) -> ContextMessage:
+    return ContextMessage(
+        role="user", type="text", content=f"[ระบบ: เมืองทักผู้แจ้งไปก่อน ผู้แจ้งยังไม่ได้พิมพ์อะไร เหตุที่ทัก: {reason}]"
+    )
+
+
 def sticker_note(keywords: str | None) -> str:
     """keywords = คำที่ LINE ใช้บรรยายสติกเกอร์ · LINE ไม่ส่งมา → ป้ายเปล่า"""
     return f"[ระบบ: ผู้แจ้งส่งสติกเกอร์ คำบรรยาย: {keywords}]" if keywords else "[ระบบ: ผู้แจ้งส่งสติกเกอร์]"
@@ -70,6 +83,9 @@ async def build_analyse_context(config: AiConfig, transcript: list[TranscriptMes
     ปิดท้ายด้วย SESSION_EXPIRED — Gemini ไม่รับคำขอที่จบด้วย assistant (#202)"""
     prompt = await database.select_prompt(config.analyzer_prompt_id)
     context = [ContextMessage(role="system", type="text", content=prompt.prompt)]
+    # บอททักไปก่อน → ข้อความแรกเป็นของบอท ขึ้นต้นด้วยบรรทัดของระบบก่อน
+    if transcript and transcript[0].role == "assistant":
+        context.append(ContextMessage(role="user", type="text", content=BOT_STARTED_NOTE))
     images = locations = 0
     for message in transcript:
         if message.type == "image":

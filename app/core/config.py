@@ -1,4 +1,5 @@
 import os
+from datetime import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -16,6 +17,11 @@ def _int(name: str, default: int) -> int:
         return int(os.getenv(name, "") or default)
     except ValueError:
         return default
+
+
+# เวลาในรูป "HH:MM" เช่น "01:00"
+def _time(name: str, default: str) -> time:
+    return time.fromisoformat(os.getenv(name) or default)
 
 
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -49,7 +55,18 @@ CORS_ORIGINS = [
     if origin.strip()
 ]
 
+# ทักผู้แจ้งไปก่อนเมื่อพยากรณ์บอกว่าฝนจะตก · ค่าตั้งต้นปิด เพราะเปิดแล้วส่งข้อความหาผู้แจ้งจริงทุกคน
 BROADCAST_ENABLED = _flag("BROADCAST_ENABLED")
+# เวลาไทยทั้งหมด · อ่านพยากรณ์ตั้งแต่ BROADCAST_FETCH_AT เพราะทีม data อัปโหลดพยากรณ์ของวันใหม่ตอนตี 1
+# ทักตั้งแต่ BROADCAST_SEND_AT · ถึง BROADCAST_SEND_UNTIL แล้วยังไม่ได้ทัก วันนั้นไม่ทักแล้ว ไม่ส่งข้อความตอนดึก
+BROADCAST_FETCH_AT = _time("BROADCAST_FETCH_AT", "01:00")
+BROADCAST_SEND_AT = _time("BROADCAST_SEND_AT", "08:00")
+BROADCAST_SEND_UNTIL = _time("BROADCAST_SEND_UNTIL", "20:00")
+# ตัวทักตื่นมาดูเวลาทุกกี่วินาที
+BROADCAST_CHECK_SECONDS = _int("BROADCAST_CHECK_SECONDS", 60)
+# ใบที่บอททักไปก่อน รอผู้แจ้งตอบกี่ชั่วโมงก่อนปิดใบ · ตอบแล้วนับแบบใบปกติ (CLOSE_AFTER_MINUTES)
+BROADCAST_WAIT_HOURS = _int("BROADCAST_WAIT_HOURS", 12)
+
 DEV_ROUTES_ENABLED = _flag("DEV_ROUTES_ENABLED")
 
 QUOTA_LIMIT_BY = os.getenv("QUOTA_LIMIT_BY", "both").strip().lower()

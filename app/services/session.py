@@ -5,7 +5,7 @@ import time
 from uuid import UUID
 
 from app.clients import database, redis
-from app.core.config import CLOSE_AFTER_MINUTES
+from app.core.config import BROADCAST_WAIT_HOURS, CLOSE_AFTER_MINUTES
 from app.models.context import ContextMessage
 from app.models.line import IncomingMessage
 from app.models.message import Message, TranscriptMessage
@@ -67,9 +67,9 @@ async def drop_answered(session_id: UUID, buffer: list[Message]) -> None:
     await redis.drop_from_buffer(session_id, len(buffer))
 
 
+# ใบ open ที่เงียบเกิน CLOSE_AFTER_MINUTES · ใบที่บอททักไปก่อนแล้วผู้แจ้งยังไม่ตอบ รอได้ถึง BROADCAST_WAIT_HOURS
 async def find_silent() -> list[Session]:
-    """ใบ open ที่เงียบเกิน CLOSE_AFTER_MINUTES"""
-    return await database.select_silent_sessions(CLOSE_AFTER_MINUTES)
+    return await database.select_silent_sessions(CLOSE_AFTER_MINUTES, BROADCAST_WAIT_HOURS)
 
 
 async def close(session: Session) -> bool:

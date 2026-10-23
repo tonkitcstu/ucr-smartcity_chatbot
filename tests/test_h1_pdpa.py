@@ -25,15 +25,19 @@ async def test_follow_replies_pdpa_card_and_stores_nothing(client, db, replies):
     assert await count_users(db) == 0
 
 
-async def test_accept_creates_user_without_reply(client, db, replies):
-    """2. กดยอมรับ → มี User พร้อมเวลาที่ยอมรับ · บอทไม่ตอบ"""
+async def test_accept_creates_user_and_replies_welcome(client, db, replies):
+    # 2. กดยอมรับ → มี User พร้อมเวลาที่ยอมรับ · บอทตอบข้อความตายตัวว่าเริ่มคุยได้เลย
     response = await post_webhook(client, postback_event("pdpa_accept", user_id="U_a"))
 
     assert response.status_code == 200
     row = await db.fetchrow("SELECT line_user_id, pdpa_accepted_at FROM users")
     assert row["line_user_id"] == "U_a"
     assert row["pdpa_accepted_at"] is not None
-    assert replies == []
+    assert replies[0][0] == "rt-postback"
+    assert [message.text for message in replies[0][1]] == [
+        "ขอบคุณที่ยอมรับค่ะ เริ่มคุยกับเมืองได้เลยด้วยการพิมพ์เล่าเรื่องแถวบ้าน "
+        "เช่น วันนี้หน้าบ้านมีน้ำท่วมขังหลังฝนตก"
+    ]
 
 
 async def test_accept_twice_keeps_first_accepted_at(client, db, replies):

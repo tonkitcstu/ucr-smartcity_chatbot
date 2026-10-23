@@ -31,9 +31,10 @@ async def on_follow(event: FollowEvent) -> None:
 
 
 async def on_postback(event: PostbackEvent) -> None:
-    """กดยอมรับ → สร้าง User · ไม่ตอบ (ปุ่มมี displayText ให้เขาเห็นแล้วว่ากด)"""
+    # กดยอมรับ → สร้าง User แล้วตอบข้อความตายตัวว่าเริ่มคุยได้เลย · กดซ้ำได้ข้อความเดิมอีกครั้ง
     if event.postback.data == pdpa.ACCEPT:
         await pdpa.accept(event.source.user_id)
+        await line.reply(event.reply_token, [pdpa.welcome_message()])
 
 
 async def on_message(event: MessageEvent) -> None:

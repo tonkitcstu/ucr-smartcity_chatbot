@@ -27,6 +27,12 @@ class LineOk:
     headers = {"content-type": "application/json"}
 
 
+# ทับ replies ของ conftest — ไฟล์นี้ต้องให้ reply ตัวจริงประกอบคำขอ แล้วจดที่ชั้น HTTP แทน (line_requests)
+@pytest.fixture
+def replies():
+    return []
+
+
 @pytest.fixture(autouse=True)
 def line_requests(monkeypatch):
     """แทนชั้น HTTP ของ SDK — จดคำขอที่กำลังจะออกไปหา LINE (method · ที่อยู่ · body) ไม่ยิงจริง

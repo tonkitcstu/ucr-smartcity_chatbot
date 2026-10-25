@@ -512,3 +512,163 @@ async def test_transcript_keeps_skipped_messages(client, db, tmp_path):
 
     assert response.status_code == 200
     assert [m["message_id"] for m in response.json()] == [str(message_id) for message_id in talk.message_ids]
+
+
+# --- ตัวกรองความรุนแรงกับช่วงวัน + รายงานใบเดียว — S33 · spec docs/designs/09-modules/h7-dashboard-api.md ---
+
+
+# รายงานที่ helper report() สร้างเป็น medium เสมอ · ตั้งความรุนแรงที่ต้องการทีหลัง
+async def set_severity(db, report_id, severity):
+    await db.execute("UPDATE reports SET severity = $2 WHERE report_id = $1", report_id, severity)
+
+
+# เวลาไทยของวันที่ day เวลา hour นาฬิกา เก็บเป็น UTC แบบที่ฐานเก็บ
+def thai(day, hour=12):
+    return datetime(2026, 10, day, hour, 0, tzinfo=timezone(timedelta(hours=7))).astimezone(timezone.utc)
+
+
+# ได้เฉพาะรายงานที่ความรุนแรงตรง
+async def test_severity_filter_keeps_only_that_level(client, db, ai_config, tmp_path):
+    made = {}
+    for level in ("low", "medium", "high"):
+        made[level] = await simple_report(db, ai_config, tmp_path)
+        await set_severity(db, made[level], level)
+
+    response = await client.get(REPORTS, params={"severity": "high"}, headers=api_key())
+
+    assert ids(response) == [str(made["high"])]
+
+
+# ความรุนแรงมีแค่ low medium high ตัวพิมพ์เล็ก
+@pytest.mark.parametrize("severity", ["severe", "HIGH"])
+async def test_unknown_severity_is_rejected(client, severity):
+    response = await client.get(REPORTS, params={"severity": severity}, headers=api_key())
+
+    assert response.status_code == 422
+
+
+# ช่วงวันนับวันแรกและวันสุดท้ายด้วย · ตัดวันตามเวลาไทย
+async def test_date_range_includes_both_end_days_in_thai_time(client, db, ai_config, tmp_path):
+    before = await simple_report(db, ai_config, tmp_path, created_at=thai(8, 23))
+    first_day = await simple_report(db, ai_config, tmp_path, created_at=thai(9, 0))
+    middle = await simple_report(db, ai_config, tmp_path, created_at=thai(10))
+    last_day = await simple_report(db, ai_config, tmp_path, created_at=thai(11, 23))
+    after = await simple_report(db, ai_config, tmp_path, created_at=thai(12, 0))
+
+    response = await client.get(
+        REPORTS, params={"start_date": "2026-10-09", "end_date": "2026-10-11"}, headers=api_key()
+    )
+
+    assert ids(response) == [str(last_day), str(middle), str(first_day)]
+    assert str(before) not in ids(response) and str(after) not in ids(response)
+
+
+# ใส่แค่ start_date → ตั้งแต่วันนั้นเป็นต้นไป
+async def test_start_date_alone_keeps_that_day_onwards(client, db, ai_config, tmp_path):
+    await simple_report(db, ai_config, tmp_path, created_at=thai(9))
+    on_the_day = await simple_report(db, ai_config, tmp_path, created_at=thai(10))
+    later = await simple_report(db, ai_config, tmp_path, created_at=thai(20))
+
+    response = await client.get(REPORTS, params={"start_date": "2026-10-10"}, headers=api_key())
+
+    assert ids(response) == [str(later), str(on_the_day)]
+
+
+# ใส่แค่ end_date → ทุกใบจนถึงวันนั้น
+async def test_end_date_alone_keeps_up_to_that_day(client, db, ai_config, tmp_path):
+    earlier = await simple_report(db, ai_config, tmp_path, created_at=thai(1))
+    on_the_day = await simple_report(db, ai_config, tmp_path, created_at=thai(10))
+    await simple_report(db, ai_config, tmp_path, created_at=thai(11))
+
+    response = await client.get(REPORTS, params={"end_date": "2026-10-10"}, headers=api_key())
+
+    assert ids(response) == [str(on_the_day), str(earlier)]
+
+
+# วันเริ่มเลยวันจบ → ไม่มีวันไหนอยู่ในช่วง ได้รายการว่าง ไม่ใช่ error
+async def test_start_after_end_gives_empty_list(client, db, ai_config, tmp_path):
+    await simple_report(db, ai_config, tmp_path, created_at=thai(10))
+
+    response = await client.get(
+        REPORTS, params={"start_date": "2026-10-11", "end_date": "2026-10-09"}, headers=api_key()
+    )
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+# ใส่ป้าย ความรุนแรง และช่วงวันพร้อมกัน → ต้องตรงทุกตัว · ใบหลอกแต่ละใบผิดไปตัวเดียว
+async def test_tag_severity_and_range_must_all_match(client, db, ai_config, tmp_path):
+    wanted = await simple_report(db, ai_config, tmp_path, tags=("น้ำท่วม",), created_at=thai(10))
+    wrong_tag = await simple_report(db, ai_config, tmp_path, tags=("ขยะ",), created_at=thai(10))
+    wrong_severity = await simple_report(db, ai_config, tmp_path, tags=("น้ำท่วม",), created_at=thai(10))
+    out_of_range = await simple_report(db, ai_config, tmp_path, tags=("น้ำท่วม",), created_at=thai(20))
+    for report_id in (wanted, wrong_tag, out_of_range):
+        await set_severity(db, report_id, "high")
+
+    response = await client.get(
+        REPORTS,
+        params={"tag": "น้ำท่วม", "severity": "high", "start_date": "2026-10-09", "end_date": "2026-10-11"},
+        headers=api_key(),
+    )
+
+    assert ids(response) == [str(wanted)]
+    assert str(wrong_severity) not in ids(response)
+
+
+@pytest.mark.parametrize(
+    "params",
+    [{"start_date": "10-10-2026"}, {"end_date": "yesterday"}],
+    ids=["start-wrong-order", "end-word"],
+)
+async def test_wrong_range_date_is_rejected(client, params):
+    response = await client.get(REPORTS, params=params, headers=api_key())
+
+    assert response.status_code == 422
+
+
+# --- GET /reports/{report_id} ---
+
+
+# รายงานใบเดียวหน้าตาเหมือนหนึ่งใบในรายการทุกช่อง
+async def test_one_report_matches_its_item_in_the_list(client, db, ai_config, tmp_path):
+    talk = await conversation(db, tmp_path, ("user", "text", "น้ำท่วมหน้าบ้าน"), ("user", "image", b"photo"))
+    report_id = await report(db, ai_config, talk, attachment_ids=talk.attachment_ids, pin=(13.75, 100.5))
+    await simple_report(db, ai_config, tmp_path, desc="ขยะล้นถัง", tags=("ขยะ",))
+
+    [item] = [item for item in (await client.get(REPORTS, headers=api_key())).json() if item["report_id"] == str(report_id)]
+    response = await client.get(f"{REPORTS}/{report_id}", headers=api_key())
+
+    assert response.status_code == 200
+    assert response.json() == item
+
+
+async def test_unknown_report_is_not_found(client):
+    response = await client.get(f"{REPORTS}/{uuid4()}", headers=api_key())
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Report not found"}
+
+
+async def test_report_id_must_be_uuid(client):
+    response = await client.get(f"{REPORTS}/not-a-uuid", headers=api_key())
+
+    assert response.status_code == 422
+
+
+# เส้นใหม่ต้องผ่านด่านกุญแจ API เหมือนสามเส้นเดิม
+@pytest.mark.parametrize("headers", list(REJECTED.values()), ids=list(REJECTED))
+async def test_one_report_rejects_without_valid_api_key(client, headers):
+    response = await client.get(f"{REPORTS}/{uuid4()}", headers=headers())
+
+    assert response.status_code == 401
+
+
+async def test_one_report_locked_when_api_key_is_not_set(client, monkeypatch):
+    from app.core import config
+
+    monkeypatch.setattr(config, "DASHBOARD_API_KEY", None)
+
+    response = await client.get(f"{REPORTS}/{uuid4()}", headers=api_key())
+
+    assert response.status_code == 503

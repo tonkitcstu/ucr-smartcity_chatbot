@@ -6,34 +6,48 @@ from uuid import UUID
 
 from app.models.attachment import AttachmentLink
 from app.models.message import DashboardMessage
-from app.models.report import DashboardReport
+from app.models.report import DashboardReport, ReportRow, Severity
 from app.services import attachment, report, session
 
 THAI_TIME = timezone(timedelta(hours=7))
 
 
-async def list_reports(date: date | None, tag: str | None, limit: int) -> list[DashboardReport]:
+async def list_reports(
+    date: date | None,
+    start_date: date | None,
+    end_date: date | None,
+    tag: str | None,
+    severity: Severity | None,
+    limit: int,
+) -> list[DashboardReport]:
+    rows = await report.find(date, start_date, end_date, tag, severity, limit)
+    return [to_dashboard(row) for row in rows]
+
+
+async def find_report(report_id: UUID) -> DashboardReport | None:
+    """ไม่มีรายงานนี้ → None (api ตอบ 404)"""
+    row = await report.find_one(report_id)
+    return to_dashboard(row) if row else None
+
+
+def to_dashboard(row: ReportRow) -> DashboardReport:
     """ช่องเดียวกับ PSQL · รูปเป็นลิงก์ · เวลาเป็นเวลาไทย"""
-    rows = await report.find(date, tag, limit)
-    return [
-        DashboardReport(
-            report_id=row.report_id,
-            session_id=row.session_id,
-            user_id=row.user_id,
-            desc=row.desc,
-            tags=row.tags,
-            severity=row.severity,
-            affected_groups=row.affected_groups,
-            time_periods=row.time_periods,
-            place=row.place,
-            lat=row.lat,
-            lng=row.lng,
-            attachments=[link(attachment_id) for attachment_id in row.attachment_ids],
-            started_at=row.started_at.astimezone(THAI_TIME),
-            created_at=row.created_at.astimezone(THAI_TIME),
-        )
-        for row in rows
-    ]
+    return DashboardReport(
+        report_id=row.report_id,
+        session_id=row.session_id,
+        user_id=row.user_id,
+        desc=row.desc,
+        tags=row.tags,
+        severity=row.severity,
+        affected_groups=row.affected_groups,
+        time_periods=row.time_periods,
+        place=row.place,
+        lat=row.lat,
+        lng=row.lng,
+        attachments=[link(attachment_id) for attachment_id in row.attachment_ids],
+        started_at=row.started_at.astimezone(THAI_TIME),
+        created_at=row.created_at.astimezone(THAI_TIME),
+    )
 
 
 async def find_attachment(attachment_id: UUID) -> Path | None:

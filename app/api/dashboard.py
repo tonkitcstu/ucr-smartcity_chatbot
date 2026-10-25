@@ -11,20 +11,16 @@ from app.models.report import DashboardReport
 from app.services import auth
 
 
-def require_jwt(authorization: str | None = Header(default=None)) -> dict:
-    """ด่านของทุกเส้น: ต้องมี Authorization: Bearer <jwt> ที่ทีมออกแบบออกให้"""
-    if not config.SECRET_KEY:
-        raise HTTPException(status_code=503, detail="SECRET_KEY is not set")
-    scheme, _, token = (authorization or "").partition(" ")
-    if scheme.lower() != "bearer":
-        raise HTTPException(status_code=401, detail="Could not validate credentials")
-    try:
-        return auth.read_jwt(token.strip())
-    except auth.Denied:
-        raise HTTPException(status_code=401, detail="Could not validate credentials")
+def require_api_key(authorization: str | None = Header(default=None)) -> None:
+    """ด่านของทุกเส้น: ต้องมี Authorization: Bearer <กุญแจ> ที่ตรงกับ DASHBOARD_API_KEY ใน .env"""
+    if not config.DASHBOARD_API_KEY:
+        raise HTTPException(status_code=503, detail="DASHBOARD_API_KEY is not set")
+    scheme, _, key = (authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not auth.is_valid_key(key.strip()):
+        raise HTTPException(status_code=401, detail="Invalid API key")
 
 
-router = APIRouter(prefix="/api/dashboard", dependencies=[Depends(require_jwt)])
+router = APIRouter(prefix="/api/dashboard", dependencies=[Depends(require_api_key)])
 
 
 @router.get("/reports")

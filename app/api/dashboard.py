@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 from app.controllers import dashboard
 from app.core import config
 from app.models.message import DashboardMessage
-from app.models.report import DashboardReport
+from app.models.report import DashboardReport, Severity
 from app.services import auth
 
 
@@ -26,10 +26,21 @@ router = APIRouter(prefix="/api/dashboard", dependencies=[Depends(require_api_ke
 @router.get("/reports")
 async def reports(
     date: datetime.date | None = None,
+    start_date: datetime.date | None = None,
+    end_date: datetime.date | None = None,
     tag: str | None = None,
+    severity: Severity | None = None,
     limit: int = Query(default=20, ge=1, le=200),
 ) -> list[DashboardReport]:
-    return await dashboard.list_reports(date, tag, limit)
+    return await dashboard.list_reports(date, start_date, end_date, tag, severity, limit)
+
+
+@router.get("/reports/{report_id}")
+async def one_report(report_id: UUID) -> DashboardReport:
+    found = await dashboard.find_report(report_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="Report not found")
+    return found
 
 
 @router.get("/attachments/{attachment_id}")

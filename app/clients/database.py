@@ -315,28 +315,53 @@ async def insert_active_ai_config(
 
 
 # รายงานใหม่ → เก่า + รูปของแต่ละใบ · date นับวันตามเวลาไทย · tag ต้องตรงทั้งคำ
-async def select_reports(date: date | None, tag: str | None, limit: int) -> list[ReportRow]:
+# ช่องของรายงานหนึ่งใบ + รูปที่ผูกกับมัน · ใช้ร่วมกันทั้งรายการและใบเดียว · ต่อท้ายด้วย WHERE ... GROUP BY
+SELECT_REPORT = """
+    SELECT r.report_id, r.session_id, s.user_id, r."desc", coalesce(r.tags, '{}') AS tags,
+           r.severity, r.affected_groups, r.time_periods, r.place, r.lat, r.lng,
+           coalesce(array_agg(a.attachment_id ORDER BY a.created_at) FILTER (WHERE a.attachment_id IS NOT NULL),
+                    '{}') AS attachment_ids,
+           r.started_at, r.created_at
+    FROM reports r
+    JOIN sessions s ON s.session_id = r.session_id
+    LEFT JOIN attachments a ON a.report_id = r.report_id
+"""
+
+
+# ตัวกรองที่เป็น None = ไม่กรอง · วันทั้งสามตัวนับจาก created_at ตามเวลาไทย
+async def select_reports(
+    date: date | None,
+    start_date: date | None,
+    end_date: date | None,
+    tag: str | None,
+    severity: str | None,
+    limit: int,
+) -> list[ReportRow]:
     rows = await pool.fetch(
-        """
-        SELECT r.report_id, r.session_id, s.user_id, r."desc", coalesce(r.tags, '{}') AS tags,
-               r.severity, r.affected_groups, r.time_periods, r.place, r.lat, r.lng,
-               coalesce(array_agg(a.attachment_id ORDER BY a.created_at) FILTER (WHERE a.attachment_id IS NOT NULL),
-                        '{}') AS attachment_ids,
-               r.started_at, r.created_at
-        FROM reports r
-        JOIN sessions s ON s.session_id = r.session_id
-        LEFT JOIN attachments a ON a.report_id = r.report_id
+        SELECT_REPORT
+        + """
         WHERE ($1::date IS NULL OR (r.created_at AT TIME ZONE 'Asia/Bangkok')::date = $1)
-          AND ($2::text IS NULL OR $2 = ANY (r.tags))
+          AND ($2::date IS NULL OR (r.created_at AT TIME ZONE 'Asia/Bangkok')::date >= $2)
+          AND ($3::date IS NULL OR (r.created_at AT TIME ZONE 'Asia/Bangkok')::date <= $3)
+          AND ($4::text IS NULL OR $4 = ANY (r.tags))
+          AND ($5::text IS NULL OR r.severity = $5)
         GROUP BY r.report_id, s.user_id
         ORDER BY r.created_at DESC
-        LIMIT $3
+        LIMIT $6
         """,
         date,
+        start_date,
+        end_date,
         tag,
+        severity,
         limit,
     )
     return [ReportRow(**row) for row in rows]
+
+
+async def select_report(report_id: UUID) -> ReportRow | None:
+    row = await pool.fetchrow(SELECT_REPORT + " WHERE r.report_id = $1 GROUP BY r.report_id, s.user_id", report_id)
+    return ReportRow(**row) if row else None
 
 
 async def select_attachment_path(attachment_id: UUID) -> str | None:

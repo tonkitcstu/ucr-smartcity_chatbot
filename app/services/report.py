@@ -23,6 +23,17 @@ async def save(
         await database.link_attachments(report_id, [images[n - 1].attachment_id for n in draft.images])
 
 
-async def find(date: date | None, tag: str | None, limit: int) -> list[ReportRow]:
-    """รายงานใหม่ → เก่า · date / tag ไม่ส่ง = ไม่กรอง"""
-    return await database.select_reports(date, tag, limit)
+async def find(
+    date: date | None,
+    start_date: date | None,
+    end_date: date | None,
+    tag: str | None,
+    severity: str | None,
+    limit: int,
+) -> list[ReportRow]:
+    """รายงานใหม่ → เก่า · ตัวกรองที่ไม่ส่ง = ไม่กรอง · ส่งหลายตัว = ต้องตรงทุกตัว"""
+    return await database.select_reports(date, start_date, end_date, tag, severity, limit)
+
+
+async def find_one(report_id: UUID) -> ReportRow | None:
+    return await database.select_report(report_id)

@@ -46,10 +46,8 @@ UPLOADS_DIR = Path(os.getenv("UPLOADS_DIR") or BASE_DIR / "uploads")
 CLOSE_AFTER_MINUTES = _int("CLOSE_AFTER_MINUTES", 120)
 SWEEP_EVERY_SECONDS = _int("SWEEP_EVERY_SECONDS", 60)
 
-SECRET_KEY = os.getenv("SECRET_KEY")
-ALGORITHM = os.getenv("ALGORITHM", "HS256")
-DASHBOARD_USER = os.getenv("DASHBOARD_USER", "ucr")
-DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD")
+# กุญแจที่ทีมแดชบอร์ดแนบมาใน Authorization: Bearer <กุญแจ> · ไม่ตั้ง = ทุกเส้นใต้ /api/dashboard ตอบ 503
+DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY")
 CORS_ORIGINS = [
     origin.strip().rstrip("/")
     for origin in (os.getenv("CORS_ORIGINS") or "").split(",")

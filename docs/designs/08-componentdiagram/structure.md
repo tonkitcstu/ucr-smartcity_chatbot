@@ -44,7 +44,7 @@ app/
     line.py                     เช็คลายเซ็น แกะ event: follow → การ์ด PDPA · postback → ยอมรับ ·
                                 message → เช็ค PDPA → บันทึก → ต่อ buffer + เวลาข้อความล่าสุด →
                                           ถ้า IDLE: IDLE→BUFFERING + ใบสั่งงานคุย · ถ้า BUFFERING อยู่แล้ว: ไม่ใส่ใบใหม่  [S1–S4]
-    dashboard.py                เช็ค JWT → อ่านรายงาน → รูปแบบ API เดิม ไม่มี LINE ID  [S8]
+    dashboard.py                เช็คกุญแจ API → อ่านรายงาน → รูปแบบ API เดิม ไม่มี LINE ID  [S8]
 
   workers/                      สมองเบื้องหลัง ไม่มี request ปลุก
     worker.py                   หยิบใบสั่งงาน แยกเป็น asyncio task ต่อใบ
@@ -63,7 +63,7 @@ app/
     communicator.py             ตัวคุย: เรียก AI แบบ stream → บันทึก ai_calls → คืนคำตอบ (ไม่รู้จัก LINE)
     analyser.py                 ตัววิเคราะห์: เรียก AI → ตรวจรูปแบบ → บันทึก ai_calls → คืนรายงาน 0..n
     report.py                   บันทึกรายงาน + ผูกรูป, อ่านรายงานเป็นรูปแบบ API เดิม
-    auth.py                     แกะ JWT (มีอยู่แล้ว)
+    auth.py                     เช็คกุญแจ API
 
   clients/                      ภาษาของของนอกบ้าน หนึ่งไฟล์ต่อหนึ่งอย่าง
     database.py                 SQL ทั้งหมด

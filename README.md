@@ -119,13 +119,13 @@ docker/
 |---|---|---|
 | `POST /webhook/line` | รับ event จาก LINE | ตรวจด้วยลายเซ็นของ LINE |
 | `GET /health` | PostgreSQL · Redis · worker · sweeper ยังอยู่ไหม | ทุกคน |
-| `GET /api/dashboard/reports` | รายงาน ใหม่ไปเก่า กรองด้วย `date` · `tag` · `limit` | JWT |
-| `GET /api/dashboard/attachments/{attachment_id}` | ไฟล์รูปของรายงาน | JWT |
-| `GET /api/dashboard/transcripts/{session_id}` | บทสนทนาทั้งใบ | JWT |
+| `GET /api/dashboard/reports` | รายงาน ใหม่ไปเก่า กรองด้วย `date` · `tag` · `limit` | กุญแจ API |
+| `GET /api/dashboard/attachments/{attachment_id}` | ไฟล์รูปของรายงาน | กุญแจ API |
+| `GET /api/dashboard/transcripts/{session_id}` | บทสนทนาทั้งใบ | กุญแจ API |
 
-3 เส้นใต้ `/api/dashboard` ต้องส่ง `Authorization: Bearer <jwt>` ที่เซ็นด้วย `SECRET_KEY`
-ตัวเดียวกับใน `.env` — backend ของทีมออกแบบเป็นคนออก token เราแค่ตรวจ
-ไม่ตั้ง `SECRET_KEY` = 3 เส้นนี้ตอบ 503 · token ผิดหรือไม่ส่ง = 401
+ทุกเส้นใต้ `/api/dashboard` ต้องส่ง header `Authorization: Bearer <กุญแจ>` ที่ตรงกับ `DASHBOARD_API_KEY` ใน `.env`
+— ทีมออกแบบได้กุญแจดอกเดียวกัน · ไม่ตั้ง `DASHBOARD_API_KEY` = ทุกเส้นตอบ 503 · กุญแจผิดหรือไม่ส่ง = 401
+สเปกเต็มพร้อม curl: `docs/designs/09-modules/h7-dashboard-api.md`
 
 ## test
 

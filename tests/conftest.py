@@ -23,9 +23,8 @@ os.environ["SILENCE_SECONDS"] = "0.3"
 # test ของตัวกวาดใบเขียนตามเวลาปิดใบ 10 นาที · ค่าจริงเป็น 120 (2026-10-23)
 os.environ["CLOSE_AFTER_MINUTES"] = "10"
 os.environ["UPLOADS_DIR"] = tempfile.mkdtemp(prefix="ucr-uploads-")
-# กุญแจ JWT ของ test — ไม่ใช้ของจริงใน .env (H7)
-os.environ["SECRET_KEY"] = "test-secret-key-shared-with-dashboard-team"
-os.environ["ALGORITHM"] = "HS256"
+# กุญแจ API ของ test — ไม่ใช้ของจริงใน .env
+os.environ["DASHBOARD_API_KEY"] = "test-api-key-shared-with-dashboard-team"
 
 SCHEMA = Path(__file__).resolve().parent.parent / "schema.sql"
 

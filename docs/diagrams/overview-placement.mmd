@@ -1,0 +1,69 @@
+---
+title: Where Things Run
+config:
+  theme: base
+  themeVariables:
+    fontFamily: "Inter, Helvetica, Arial, sans-serif"
+    fontSize: 14px
+  flowchart:
+    nodeSpacing: 30
+    rankSpacing: 60
+---
+
+flowchart LR
+    %% ---------- style: edit only this block to change the look ----------
+    classDef external  fill:#e0e7ff,stroke:#4f46e5,color:#1e1b4b
+    classDef optional  stroke-dasharray:5 4
+    classDef store     fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+    classDef file      fill:#f8fafc,stroke:#94a3b8,color:#334155
+    classDef device    fill:#ffffff,stroke:#334155,stroke-width:2px
+    classDef env       fill:#f8fafc,stroke:#64748b
+    %% --------------------------------------------------------------------
+    %% ~~~ is an invisible link: it only sets position, nothing is drawn
+
+    line@{ icon: "logos:line", form: "square", label: "LINE Messaging API", pos: "b" }
+    dashboard(["Dashboard web app"]):::external
+    gemini@{ icon: "logos:google-gemini", form: "square", label: "Gemini API", pos: "b" }
+
+    subgraph ec2["EC2 or dev machine"]
+        subgraph compose["Docker Compose · ucr-smartcity_chatbot"]
+            direction TB
+            subgraph app_container["app container · Python 3.13 · port 8000"]
+                direction TB
+                subgraph uvicorn["uvicorn process · app.main"]
+                    direction LR
+                    routes@{ icon: "logos:fastapi-icon", form: "square", label: "FastAPI routes", pos: "b" }
+                    worker@{ icon: "logos:python", form: "square", label: "worker", pos: "b" }
+                    sweeper@{ icon: "logos:python", form: "square", label: "sweeper", pos: "b" }
+                    broadcaster@{ icon: "logos:python", form: "square", label: "broadcaster · off by default", pos: "b" }
+                end
+                subgraph app_files["files"]
+                    direction LR
+                    forecast["mock_forecast.json"]:::file
+                    uploads[("uploads volume")]:::store
+                end
+            end
+            subgraph redis_container["redis container"]
+                direction LR
+                redis@{ icon: "logos:redis", form: "square", label: "Redis 8", pos: "b" }
+                redisdata[("redisdata volume")]:::store
+            end
+            subgraph postgres_container["postgres container"]
+                direction LR
+                postgres@{ icon: "logos:postgresql", form: "square", label: "PostgreSQL 18 + PostGIS", pos: "b" }
+                pgdata[("pgdata volume")]:::store
+                schema["schema.sql"]:::file
+            end
+        end
+    end
+
+    class ec2 device
+    class compose,app_container,uvicorn,app_files,redis_container,postgres_container env
+    class broadcaster optional
+
+    %% positions only
+    line ~~~ ec2
+    dashboard ~~~ ec2
+    ec2 ~~~ gemini
+    uvicorn ~~~ app_files
+    app_container ~~~ redis_container ~~~ postgres_container

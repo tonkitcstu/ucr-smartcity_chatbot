@@ -1,31 +1,97 @@
-flowchart LR
-    line(["LINE OA"])
-    dashboard(["Design Team Dashboard"])
-    gemini(["Gemini API"])
+---
+title: Architecture Overview (UML deployment)
+config:
+  theme: base
+  themeVariables:
+    fontFamily: "Inter, Helvetica, Arial, sans-serif"
+    fontSize: 14px
+    lineColor: "#64748b"
+  flowchart:
+    curve: basis
+    nodeSpacing: 40
+    rankSpacing: 70
+---
 
-    subgraph ec2["EC2"]
-        subgraph app_container["App Container"]
-            direction TB
-            app@{ icon: "logos:python", form: "square", label: "FastAPI + worker / sweeper / broadcaster", pos: "b" }
-            uploads[("uploads volume")]
-            app -- "photo files" --> uploads
-        end
-        subgraph redis_container["Redis Container"]
-            direction TB
-            redis@{ icon: "logos:redis", form: "square", label: "Redis 8", pos: "b" }
-            redisdata[("redisdata volume")]
-            redis --- redisdata
-        end
-        subgraph postgres_container["Postgres Container"]
-            direction TB
-            postgres@{ icon: "logos:postgresql", form: "square", label: "PostgreSQL 18 + PostGIS", pos: "b" }
-            pgdata[("pgdata volume")]
-            postgres --- pgdata
+flowchart LR
+    %% ---------- style: edit only this block to change the look ----------
+    classDef actor     fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef external  fill:#e0e7ff,stroke:#4f46e5,color:#1e1b4b
+    classDef component fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef optional  fill:#f1f5f9,stroke:#94a3b8,color:#334155,stroke-dasharray:5 4
+    classDef database  fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+    classDef artifact  fill:#f8fafc,stroke:#94a3b8,color:#334155
+    classDef device    fill:#ffffff,stroke:#334155,stroke-width:2px
+    classDef env       fill:#f8fafc,stroke:#64748b
+    %% --------------------------------------------------------------------
+    %% UML deployment notation in Mermaid:
+    %%   «actor» person · «external system» node outside our host · «device» machine
+    %%   «execution environment» runtime that holds other parts · «component» code part
+    %%   «artifact» file · «database» data store · «volume» disk storage
+    %%   solid line = communication path · dashed arrow = «use» dependency
+
+    reporter@{ shape: rounded, label: "«actor»<br/>Reporter" }
+    designteam@{ shape: rounded, label: "«actor»<br/>Design team" }
+    line@{ shape: rect, label: "«external system»<br/>LINE Messaging API" }
+    dashboard@{ shape: rect, label: "«external system»<br/>Dashboard web app" }
+    gemini@{ shape: rect, label: "«external system»<br/>Gemini API<br/>OpenAI-compatible" }
+
+    subgraph ec2["«device» EC2 · or dev machine"]
+        subgraph compose["«execution environment» Docker Compose · ucr-smartcity_chatbot"]
+            subgraph app_container["«execution environment» app container · Python 3.13 · port 8000"]
+                direction TB
+                subgraph uvicorn["«execution environment» uvicorn process · app.main"]
+                    direction TB
+                    routes@{ shape: rect, label: "«component»<br/>FastAPI routes<br/>/webhook/line<br/>/api/dashboard/*<br/>/health" }
+                    worker@{ shape: rect, label: "«component»<br/>worker<br/>chat jobs, analyse jobs" }
+                    sweeper@{ shape: rect, label: "«component»<br/>sweeper<br/>closes silent sessions" }
+                    broadcaster@{ shape: rect, label: "«component»<br/>broadcaster<br/>off unless BROADCAST_ENABLED" }
+                end
+                forecast@{ shape: doc, label: "«artifact»<br/>mock_forecast.json" }
+                uploads@{ shape: lin-cyl, label: "«volume»<br/>uploads<br/>photo files" }
+            end
+            subgraph redis_container["«execution environment» redis container · Redis 8"]
+                direction TB
+                redis@{ shape: cyl, label: "«database»<br/>Redis" }
+                redisdata@{ shape: lin-cyl, label: "«volume»<br/>redisdata" }
+            end
+            subgraph postgres_container["«execution environment» postgres container · PostgreSQL 18 + PostGIS"]
+                direction TB
+                postgres@{ shape: cyl, label: "«database»<br/>PostgreSQL" }
+                pgdata@{ shape: lin-cyl, label: "«volume»<br/>pgdata" }
+                schema@{ shape: doc, label: "«artifact»<br/>schema.sql" }
+            end
         end
     end
 
-    line <-- "to app: webhook text, image, postback<br/>from app: reply, push, fetch image" --> app
-    dashboard <-- "to app: GET reports, attachments, transcripts<br/>from app: reports JSON, photo files" --> app
-    gemini <-- "from app: chat history + new messages<br/>to app: chat reply, report JSON" --> app
-    app <-- "job queue, state, message buffer" --> redis
-    app <-- "users, sessions, messages, reports" --> postgres
+    class reporter,designteam actor
+    class line,dashboard,gemini external
+    class routes,worker,sweeper component
+    class broadcaster optional
+    class redis,postgres,uploads,redisdata,pgdata database
+    class forecast,schema artifact
+    class ec2 device
+    class compose,app_container,redis_container,postgres_container,uvicorn env
+
+    %% communication paths: left side calls in, right side is called
+    reporter --- |"chats, sends photos, pins, stickers<br/>taps PDPA accept"| line
+    designteam --- |"reads reports, photos, transcripts"| dashboard
+    line --- |"HTTPS · ngrok on dev<br/>to app: webhook new message, follow, postback<br/>from app: reply, push, show loading,<br/>download photo"| app_container
+    dashboard --- |"HTTPS · Bearer DASHBOARD_API_KEY<br/>to app: GET reports, attachments, transcripts<br/>from app: reports JSON, photo files"| app_container
+    app_container --- |"HTTPS<br/>to Gemini: chat history + new messages,<br/>closed session transcript, broadcast reason<br/>from Gemini: chat reply, reports JSON,<br/>first message"| gemini
+
+    %% «use» dependencies inside the host
+    routes -. "save users, sessions, messages<br/>read reports for dashboard" .-> postgres
+    routes -. "buffer message, change state<br/>push chat job" .-> redis
+    routes -. "serve photo files" .-> uploads
+    worker -. "pop jobs, read buffer and history<br/>change state" .-> redis
+    worker -. "save answers, ai_calls, reports" .-> postgres
+    worker -. "save photos" .-> uploads
+    sweeper -. "find silent sessions, close them" .-> postgres
+    sweeper -. "set CLOSING, push analyse job" .-> redis
+    broadcaster -. "read forecast" .-> forecast
+    broadcaster -. "one broadcasts row per day<br/>open sessions" .-> postgres
+
+    %% storage
+    redis --- redisdata
+    postgres --- pgdata
+    schema -. "creates tables on first start" .-> postgres

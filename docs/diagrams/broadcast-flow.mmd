@@ -1,0 +1,93 @@
+---
+title: Broadcast — Bot Messages First on Weather Days
+config:
+  theme: base
+  themeVariables:
+    fontFamily: "Inter, Helvetica, Arial, sans-serif"
+    fontSize: 14px
+    lineColor: "#64748b"
+  flowchart:
+    curve: basis
+    nodeSpacing: 40
+    rankSpacing: 50
+---
+
+flowchart TB
+    %% ---------- style: edit only this block to change the look ----------
+    classDef step     fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef check    fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef external fill:#e0e7ff,stroke:#4f46e5,color:#1e1b4b
+    classDef stop     fill:#f1f5f9,stroke:#94a3b8,color:#334155
+    classDef event    fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+    classDef env      fill:#f8fafc,stroke:#64748b
+    %% --------------------------------------------------------------------
+    %% green = broadcaster does · yellow = broadcaster checks · blue = outside system
+    %% grey = nothing more today · red = LINE event that changes who can get a message
+    %% the broadcaster wakes every BROADCAST_CHECK_SECONDS and checks the time
+
+    lambda@{ shape: rect, label: "Forecast Lambda · outside our host<br/>every day 01:00<br/>uploads one forecast file per day<br/>keeps only hours with rain or over 35°C" }
+
+    subgraph read["1 · read the forecast · from BROADCAST_FETCH_AT 01:00"]
+        direction TB
+        fetch["download today's file<br/>FORECAST_URL · empty = mock_forecast.json"]
+        ready{"file uploaded?"}
+        reason{"any hour from BROADCAST_SEND_AT<br/>to BROADCAST_SEND_UNTIL<br/>with rain or over 35°C?<br/>communities with error are skipped"}
+        scheduled["today = scheduled<br/>reason = rain hours and hot hours"]
+    end
+
+    subgraph pick["2 · pick people · from BROADCAST_SEND_AT 08:00"]
+        direction TB
+        late{"before BROADCAST_SEND_UNTIL 20:00?"}
+        howmany["how many today =<br/>BROADCAST_DAILY_LIMIT 10 minus already sent today<br/>no more than LINE messages left this month"]
+        who["who can get one:<br/>still follows the bot<br/>no open session<br/>no broadcast in last BROADCAST_GAP_DAYS 7<br/>did not ignore the last BROADCAST_MAX_UNANSWERED 3"]
+        order["order: never messaged first,<br/>then oldest broadcast first,<br/>random among equals · take how many"]
+    end
+
+    subgraph send["3 · message each picked person"]
+        direction TB
+        tokens{"system tokens<br/>left today?"}
+        open["open a broadcast session"]
+        write["Gemini writes a friendly message<br/>from the reason"]
+        push["LINE push · counts 1 of the monthly limit"]
+        save["save the reason line and the message<br/>as the start of the session"]
+        sent["today = sent"]
+    end
+
+    subgraph after["4 · after the message"]
+        direction TB
+        reply["reporter replies within BROADCAST_WAIT_HOURS 24<br/>same session · Gemini sees the reason and its message<br/>then normal chat, then reports"]
+        silent["no reply in BROADCAST_WAIT_HOURS 24<br/>sweeper closes the session · no analysis<br/>counts as 1 ignored broadcast"]
+    end
+
+    retry(["try again next check"])
+    skipped(["today = skipped · no message"])
+    expired(["today = expired · no message"])
+    stopped(["stop · the rest get nothing today"])
+
+    unfollow@{ shape: rect, label: "LINE unfollow · reporter blocked the bot<br/>user marked blocked" }
+    follow@{ shape: rect, label: "LINE follow · reporter added or unblocked the bot<br/>user marked following again" }
+
+    class fetch,scheduled,howmany,who,order,open,write,push,save,sent,reply,silent step
+    class ready,reason,late,tokens check
+    class lambda external
+    class retry,skipped,expired,stopped stop
+    class unfollow,follow event
+    class read,pick,send,after env
+
+    lambda -. "file of the day" .-> fetch
+    fetch --> ready
+    ready -- no --> retry
+    ready -- yes --> reason
+    reason -- no --> skipped
+    reason -- yes --> scheduled
+    scheduled --> late
+    late -- no --> expired
+    late -- yes --> howmany --> who --> order --> tokens
+    tokens -- no --> stopped
+    tokens -- "yes · next person" --> open --> write --> push --> save
+    save -- "more people" --> tokens
+    save -- "everyone picked is done" --> sent
+    push -. "reporter" .-> reply
+    push -. "reporter" .-> silent
+    unfollow -. "leaves the pick list" .-> who
+    follow -. "back in the pick list" .-> who

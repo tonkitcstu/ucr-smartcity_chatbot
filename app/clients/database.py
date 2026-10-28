@@ -9,6 +9,7 @@ import asyncpg
 from app.core.config import DATABASE_URL
 from app.models.ai import AiConfig, AiModel, AiReply, Prompt
 from app.models.attachment import Attachment
+from app.models.answer import ChatAnswer
 from app.models.broadcast import Broadcast
 from app.models.context import ContextMessage
 from app.models.line import IncomingMessage
@@ -370,9 +371,15 @@ async def select_attachment_path(attachment_id: UUID) -> str | None:
 
 async def select_broadcast(day: date) -> Broadcast | None:
     row = await pool.fetchrow(
-        "SELECT broadcast_id, forecast_date, reason, status FROM broadcasts WHERE forecast_date = $1", day
+        "SELECT broadcast_id, forecast_date, reason, status, greeting FROM broadcasts WHERE forecast_date = $1", day
     )
-    return Broadcast(**row) if row else None
+    return to_broadcast(row) if row else None
+
+
+# greeting มาจาก jsonb เป็นข้อความ JSON
+def to_broadcast(row) -> Broadcast:
+    greeting = row["greeting"]
+    return Broadcast(**{**row, "greeting": ChatAnswer.model_validate_json(greeting) if greeting else None})
 
 
 # จดพยากรณ์ของวันนั้น · มีเหตุให้ทัก → scheduled · ไม่มี → skipped
@@ -383,13 +390,19 @@ async def insert_broadcast(day: date, forecast: dict, reason: str | None) -> Bro
         INSERT INTO broadcasts (forecast_date, forecast, reason, status)
         VALUES ($1, $2::jsonb, $3, CASE WHEN $3::text IS NULL THEN 'skipped' ELSE 'scheduled' END)
         ON CONFLICT (forecast_date) DO UPDATE SET forecast_date = EXCLUDED.forecast_date
-        RETURNING broadcast_id, forecast_date, reason, status
+        RETURNING broadcast_id, forecast_date, reason, status, greeting
         """,
         day,
         json.dumps(forecast, ensure_ascii=False),
         reason,
     )
-    return Broadcast(**row)
+    return to_broadcast(row)
+
+
+async def save_broadcast_greeting(broadcast_id: UUID, greeting: ChatAnswer) -> None:
+    await pool.execute(
+        "UPDATE broadcasts SET greeting = $2::jsonb WHERE broadcast_id = $1", broadcast_id, greeting.model_dump_json()
+    )
 
 
 async def mark_broadcast_sent(broadcast_id: UUID) -> None:

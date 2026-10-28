@@ -168,33 +168,70 @@ async def test_greets_only_once_a_day(client, db, ai_chats, pushes):
 
 
 # แอปดับระหว่างทัก (ทักคนแรกแล้ว ยังไม่ถึงคนที่สอง) → แถวยังเป็น scheduled
-# เปิดแอปใหม่ → ทักต่อเฉพาะคนที่ยังไม่ได้ · คนแรกไม่ถูกทักซ้ำ แม้เขาตอบจบจนใบถูกปิดไปแล้ว
+# เปิดแอปใหม่ → ทักต่อเฉพาะคนที่ยังไม่ได้ ด้วยข้อความเดิมที่จดไว้ ไม่ให้ AI แต่งใหม่
+# คนแรกไม่ถูกทักซ้ำ แม้เขาตอบจบจนใบถูกปิดไปแล้ว
 async def test_resumes_after_shutdown_without_greeting_twice(client, db, ai_chats, pushes, monkeypatch):
-    from app.services import quota
+    from app.services import broadcast
 
     first = await add_user(db, "U_a")
     await add_user(db, "U_b")
-    real_check = quota.is_over_system_daily_limit
-    checks = []
+    real_open = broadcast.open_session_for
+    opens = []
 
     async def shutdown_before_second(*args):
-        checks.append(1)
-        if len(checks) == 2:
+        opens.append(1)
+        if len(opens) == 2:
             raise asyncio.CancelledError
-        return await real_check(*args)
+        return await real_open(*args)
 
-    monkeypatch.setattr(quota, "is_over_system_daily_limit", shutdown_before_second)
+    monkeypatch.setattr(broadcast, "open_session_for", shutdown_before_second)
     with pytest.raises(asyncio.CancelledError):
         await tick(at(8, 0))
     assert [to for to, _ in pushes] == ["U_a"]
     assert (await broadcast_row(db))["status"] == "scheduled"
 
     await db.execute("UPDATE sessions SET status = 'closed', closed_at = now() WHERE user_id = $1", first)
-    monkeypatch.setattr(quota, "is_over_system_daily_limit", real_check)
+    monkeypatch.setattr(broadcast, "open_session_for", real_open)
     await tick(at(8, 1))
 
-    assert [to for to, _ in pushes] == ["U_a", "U_b"]
+    assert pushes == [("U_a", GREETING), ("U_b", GREETING)]
+    assert len(ai_chats) == 1
     assert (await broadcast_row(db))["status"] == "sent"
+
+
+# AI แต่งข้อความทักครั้งเดียวต่อวัน · ทุกคนได้ข้อความเดียวกัน คนละใบ · ข้อความจดไว้ที่แถวของวันนั้น
+async def test_everyone_gets_the_same_message_written_once(client, db, redis, ai_chats, pushes):
+    first = await add_user(db, "U_a")
+    second = await add_user(db, "U_b")
+
+    await tick(at(8, 0))
+
+    assert pushes == [("U_a", GREETING), ("U_b", GREETING)]
+    assert len(ai_chats) == 1
+    assert json.loads((await broadcast_row(db))["greeting"])["texts"] == GREETING
+    for user_id in (first, second):
+        opened = await broadcast_session(db, user_id)
+        saved = await db.fetch("SELECT content FROM messages WHERE session_id = $1 ORDER BY created_at", opened["session_id"])
+        assert [row["content"] for row in saved] == GREETING
+        history = [json.loads(item) for item in await redis.lrange(f"session:{opened['session_id']}:history", 0, -1)]
+        assert history[0]["content"].startswith("[ระบบ: เมืองทักผู้แจ้งไปก่อน")
+        assert [item["content"] for item in history[1:]] == GREETING
+
+
+# งบ token ของตัวคุยทั้งระบบวันนี้หมด (#239) → ไม่ให้ AI แต่ง ไม่ทักใคร
+async def test_token_limit_stops_before_writing(client, db, ai_chats, pushes, monkeypatch):
+    from app.services import quota
+
+    async def over_limit(*args):
+        return True
+
+    monkeypatch.setattr(quota, "is_over_system_daily_limit", over_limit)
+    await add_user(db, "U_a")
+
+    await tick(at(8, 0))
+
+    assert ai_chats == []
+    assert pushes == []
 
 
 # ผู้แจ้งหลายคน → ทักทุกคน คนละใบ · คนที่กำลังคุยกับบอทอยู่ (มีใบเปิด) ข้าม

@@ -45,10 +45,11 @@ flowchart TB
 
     subgraph send["3 · message each picked person"]
         direction TB
-        tokens{"system tokens<br/>left today?"}
-        open["open a broadcast session"]
-        write["Gemini writes a friendly message<br/>from the reason"]
-        push["LINE push · counts 1 of the monthly limit"]
+        tokens{"today's message not written yet<br/>and system tokens used up?"}
+        open["open a broadcast session<br/>for the next person"]
+        written{"today's message<br/>written yet?"}
+        write["Gemini writes one friendly message<br/>from the reason · saved for today"]
+        push["LINE push the same message to this person<br/>counts 1 of the monthly limit"]
         save["save the reason line and the message<br/>as the start of the session"]
         sent["today = sent"]
     end
@@ -62,13 +63,13 @@ flowchart TB
     retry(["try again next check"])
     skipped(["today = skipped · no message"])
     expired(["today = expired · no message"])
-    stopped(["stop · the rest get nothing today"])
+    stopped(["stop · nobody gets a message today"])
 
     unfollow@{ shape: rect, label: "LINE unfollow · reporter blocked the bot<br/>user marked blocked" }
     follow@{ shape: rect, label: "LINE follow · reporter added or unblocked the bot<br/>user marked following again" }
 
     class fetch,scheduled,howmany,who,order,open,write,push,save,sent,reply,silent step
-    class ready,reason,late,tokens check
+    class ready,reason,late,tokens,written check
     class lambda external
     class retry,skipped,expired,stopped stop
     class unfollow,follow event
@@ -83,9 +84,12 @@ flowchart TB
     scheduled --> late
     late -- no --> expired
     late -- yes --> howmany --> who --> order --> tokens
-    tokens -- no --> stopped
-    tokens -- "yes · next person" --> open --> write --> push --> save
-    save -- "more people" --> tokens
+    tokens -- yes --> stopped
+    tokens -- no --> open --> written
+    written -- "no · first person" --> write --> push
+    written -- yes --> push
+    push --> save
+    save -- "more people" --> open
     save -- "everyone picked is done" --> sent
     push -. "reporter" .-> reply
     push -. "reporter" .-> silent

@@ -1,0 +1,31 @@
+flowchart LR
+    line(["LINE OA"])
+    dashboard(["Design Team Dashboard"])
+    gemini(["Gemini API"])
+
+    subgraph ec2["EC2"]
+        subgraph app_container["App Container"]
+            direction TB
+            app@{ icon: "logos:python", form: "square", label: "FastAPI + worker / sweeper / broadcaster", pos: "b" }
+            uploads[("uploads volume")]
+            app -- "photo files" --> uploads
+        end
+        subgraph redis_container["Redis Container"]
+            direction TB
+            redis@{ icon: "logos:redis", form: "square", label: "Redis 8", pos: "b" }
+            redisdata[("redisdata volume")]
+            redis --- redisdata
+        end
+        subgraph postgres_container["Postgres Container"]
+            direction TB
+            postgres@{ icon: "logos:postgresql", form: "square", label: "PostgreSQL 18 + PostGIS", pos: "b" }
+            pgdata[("pgdata volume")]
+            postgres --- pgdata
+        end
+    end
+
+    line <-- "to app: webhook text, image, postback<br/>from app: reply, push, fetch image" --> app
+    dashboard <-- "to app: GET reports, attachments, transcripts<br/>from app: reports JSON, photo files" --> app
+    gemini <-- "from app: chat history + new messages<br/>to app: chat reply, report JSON" --> app
+    app <-- "job queue, state, message buffer" --> redis
+    app <-- "users, sessions, messages, reports" --> postgres

@@ -404,9 +404,55 @@ async def mark_broadcast_expired(broadcast_id: UUID) -> None:
 
 
 # ผู้แจ้งทุกคนที่ยอมรับ PDPA แล้ว เรียงตามคนที่มาก่อน
-async def select_all_users() -> list[User]:
-    rows = await pool.fetch("SELECT user_id, line_user_id, pdpa_accepted_at FROM users ORDER BY created_at")
+# ใบของการทักครั้งนี้ที่เปิดไปแล้ว = จำนวนคนที่ได้ไปแล้ว
+async def count_broadcast_sessions(broadcast_id: UUID) -> int:
+    return await pool.fetchval("SELECT count(*) FROM sessions WHERE broadcast_id = $1", broadcast_id)
+
+
+# คนที่ทักได้ ไม่เกิน count คน
+#   ยังติดตามบอท · ไม่มีใบเปิดอยู่ · ไม่ได้ข้อความทักในช่วง gap_days วันที่ผ่านมา
+#   ใบล่าสุด max_unanswered ใบ ไม่ได้เป็นใบที่บอททักแล้วผู้แจ้งไม่ตอบทั้งหมด
+# เรียง: ยังไม่เคยได้ก่อน → ได้ครั้งล่าสุดนานสุดก่อน → ยอมรับ PDPA ก่อน
+async def select_broadcast_recipients(gap_days: int, max_unanswered: int, count: int) -> list[User]:
+    rows = await pool.fetch(
+        """
+        SELECT u.user_id, u.line_user_id, u.pdpa_accepted_at
+        FROM users u
+        LEFT JOIN LATERAL (
+            SELECT max(s.started_at) AS at FROM sessions s
+            WHERE s.user_id = u.user_id AND s.broadcast_id IS NOT NULL
+        ) last_broadcast ON true
+        WHERE u.blocked_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = u.user_id AND s.status = 'open')
+          AND (last_broadcast.at IS NULL OR last_broadcast.at < now() - make_interval(days => $1))
+          AND NOT coalesce((
+              SELECT count(*) = $2 AND bool_and(recent.ignored)
+              FROM (
+                  SELECT s.broadcast_id IS NOT NULL AND NOT EXISTS (
+                      SELECT 1 FROM messages m WHERE m.session_id = s.session_id AND m.role = 'user'
+                  ) AS ignored
+                  FROM sessions s WHERE s.user_id = u.user_id
+                  ORDER BY s.started_at DESC LIMIT $2
+              ) recent
+          ), false)
+        ORDER BY last_broadcast.at ASC NULLS FIRST, u.created_at
+        LIMIT $3
+        """,
+        gap_days,
+        max_unanswered,
+        count,
+    )
     return [User(**row) for row in rows]
+
+
+# LINE unfollow · ยังไม่ยอมรับ PDPA ไม่มีแถว ไม่มีอะไรให้แก้
+async def mark_user_blocked(line_user_id: str) -> None:
+    await pool.execute("UPDATE users SET blocked_at = now() WHERE line_user_id = $1", line_user_id)
+
+
+# LINE follow
+async def mark_user_following(line_user_id: str) -> None:
+    await pool.execute("UPDATE users SET blocked_at = NULL WHERE line_user_id = $1", line_user_id)
 
 
 # เปิดใบใหม่ที่ติดป้ายว่าบอททักไปก่อน · คำสั่งเดียว ชน index ตัวไหนก็ได้ None ไม่แตะใบเดิม

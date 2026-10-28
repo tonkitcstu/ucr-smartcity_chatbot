@@ -1,32 +1,70 @@
 # ภาษาของพยากรณ์อากาศ
-# ของจริงคือไฟล์ JSON รายวันที่ทีม data อัปโหลดทุกตี 1 เวลาไทย (ข้อมูลจากกรมอุตุนิยมวิทยา) · ยังไม่ได้ต่อ
-# ตอนนี้ตอบด้วย mock_forecast.json ที่หน้าตาเหมือนไฟล์จริง และบอกว่าวันนี้ฝนตกช่วง 14:00–15:00
+# ของจริงคือไฟล์ JSON รายวันที่ Lambda ของทีม data อัปโหลดทุกตี 1 เวลาไทย (กรมอุตุนิยมวิทยา · ล่มแล้วใช้ Open-Meteo แทน)
+# ไฟล์เก็บเฉพาะชั่วโมงที่ฝนตกหรือร้อนเกิน 35 องศา · ชุมชนที่ดึงไม่ได้มีแค่ error ไม่มี forecasts
+# FORECAST_URL ว่าง → ตอบด้วย mock_forecast.json ที่หน้าตาเหมือนไฟล์จริง และบอกว่าวันนี้ฝนตกช่วง 14:00–15:00
 #   อยากลองวันที่ฝนไม่ตก: แก้ "มีฝน" ในไฟล์เป็นคำอื่น และแก้ rainfall เป็น 0
 
 import json
-from datetime import date, datetime
+from collections.abc import Callable
+from datetime import date, datetime, time
 from pathlib import Path
 
-MOCK_FILE = Path(__file__).parent / "mock_forecast.json"
+import httpx
 
-# คำที่อยู่ใน condition_label แล้วแปลว่ามีฝน · ไฟล์จริงที่เคยเห็นใช้ "มีฝน"
+from app.core.config import FORECAST_URL
+
+MOCK_FILE = Path(__file__).parent / "mock_forecast.json"
+FETCH_TIMEOUT_SECONDS = 10
+
+# คำที่อยู่ใน condition_label แล้วแปลว่ามีฝน · ไฟล์จริงใช้ "มีฝน" "ฝนหนัก" "ฝนฟ้าคะนอง"
 RAIN_WORD = "ฝน"
+# ร้อนเกินกี่องศาถึงนับเป็นเหตุให้ทัก · ตรงกับเกณฑ์ที่ Lambda ใช้เลือกชั่วโมงลงไฟล์
+HEAT_CELSIUS = 35.0
 
 
 # พยากรณ์ของวันนั้นทั้งก้อน
 # {"date": "YYYY-MM-DD", "WeatherForecasts": [{"name": ชุมชน, "location": {...}, "forecasts": [รายชั่วโมง]}]}
+# ไฟล์ของวันนั้นยังไม่ขึ้น (S3 ตอบ 403) → httpx.HTTPStatusError · ตัวทักลองใหม่รอบหน้า
 async def fetch_daily(day: date) -> dict:
+    if not FORECAST_URL:
+        return mock_daily(day)
+    async with httpx.AsyncClient(timeout=FETCH_TIMEOUT_SECONDS) as client:
+        response = await client.get(FORECAST_URL.format(date=day.isoformat()))
+    response.raise_for_status()
+    return response.json()
+
+
+def mock_daily(day: date) -> dict:
     forecast = json.loads(MOCK_FILE.read_text(encoding="utf-8"))
     # ของปลอมใช้ได้ทุกวัน จึงเปลี่ยนวันที่ของไฟล์เป็นวันที่ขอ
     forecast["date"] = day.isoformat()
     return forecast
 
 
-# ชั่วโมงที่ชุมชนไหนก็ได้มีฝน เช่น ["14:00", "15:00"] เรียงจากเช้าไปค่ำ ไม่ซ้ำ · ไม่มีฝนเลย → ลิสต์ว่าง
-def rain_hours(forecast: dict) -> list[str]:
+# ชั่วโมงตั้งแต่ start ถึงก่อน until ที่ชุมชนไหนก็ได้มีฝน เช่น ["14:00", "15:00"] · ไม่มี → ลิสต์ว่าง
+def rain_hours(forecast: dict, start: time, until: time) -> list[str]:
+    return hours_where(forecast, start, until, is_rain)
+
+
+# ชั่วโมงตั้งแต่ start ถึงก่อน until ที่ชุมชนไหนก็ได้ร้อนเกิน HEAT_CELSIUS
+def hot_hours(forecast: dict, start: time, until: time) -> list[str]:
+    return hours_where(forecast, start, until, is_hot)
+
+
+def is_rain(hour: dict) -> bool:
+    return RAIN_WORD in (hour.get("condition_label") or "") or (hour.get("rainfall") or 0) > 0
+
+
+def is_hot(hour: dict) -> bool:
+    return (hour.get("temperature") or 0) > HEAT_CELSIUS
+
+
+# เรียงจากเช้าไปค่ำ ไม่ซ้ำ · ชุมชนที่ไม่มี forecasts (ดึงไม่ได้) ข้าม
+def hours_where(forecast: dict, start: time, until: time, matches: Callable[[dict], bool]) -> list[str]:
     hours = set()
     for community in forecast["WeatherForecasts"]:
-        for hour in community["forecasts"]:
-            if RAIN_WORD in hour["condition_label"] or hour["rainfall"] > 0:
-                hours.add(datetime.fromisoformat(hour["time"]).strftime("%H:%M"))
+        for hour in community.get("forecasts", []):
+            at = datetime.fromisoformat(hour["time"]).time()
+            if start <= at < until and matches(hour):
+                hours.add(at.strftime("%H:%M"))
     return sorted(hours)

@@ -14,6 +14,7 @@ from linebot.v3.messaging import (
     PushMessageRequest,
     QuickReply,
     QuickReplyItem,
+    QuotaType,
     ReplyMessageRequest,
     ShowLoadingAnimationRequest,
     TextMessage,
@@ -74,6 +75,17 @@ async def reply(reply_token: str, messages: list) -> None:
         await AsyncMessagingApi(api_client).reply_message(
             ReplyMessageRequest(reply_token=reply_token, messages=messages)
         )
+
+
+# ข้อความ push ที่ยังส่งได้อีกในเดือนนี้ · None = แผนของ LINE OA ไม่มีเพดาน
+async def monthly_messages_left() -> int | None:
+    async with AsyncApiClient(configuration) as api_client:
+        api = AsyncMessagingApi(api_client)
+        quota = await api.get_message_quota()
+        if quota.type != QuotaType.LIMITED:
+            return None
+        used = await api.get_message_quota_consumption()
+    return max(quota.value - used.total_usage, 0)
 
 
 async def push(users: User | list[User], messages: list) -> None:

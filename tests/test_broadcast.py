@@ -1,5 +1,5 @@
-# ทักไปก่อนเมื่อพยากรณ์บอกว่าฝนจะตกหรือร้อนเกิน 35 องศา — อ่านพยากรณ์หลังตี 1 · ทักตั้งแต่ 8 โมง · เลย 2 ทุ่มไม่ทัก
-# วันละไม่เกิน BROADCAST_DAILY_LIMIT คน · แบบ docs/diagrams/broadcast-flow.mmd
+# ทักไปก่อนเมื่อพยากรณ์บอกว่าฝนจะตก — อ่านพยากรณ์หลังตี 1 · ทักตั้งแต่ 8 โมง · เลย 2 ทุ่มไม่ทัก
+# สุ่มวันละไม่เกิน BROADCAST_DAILY_LIMIT คน · แบบ docs/diagrams/broadcast-flow.mmd
 # พยากรณ์ใช้ไฟล์ปลอม app/clients/mock_forecast.json (ฝนตกช่วง 14:00–15:00) · AI กับ LINE เป็นของปลอม
 
 import asyncio
@@ -16,6 +16,7 @@ THAI_TIME = timezone(timedelta(hours=7))
 DAY = datetime(2026, 10, 23, tzinfo=THAI_TIME)
 GREETING = ["สวัสดีค่ะ เมืองจากทีม UCR นะคะ วันนี้บ่าย ๆ อาจมีฝน", "ฝนตกทีไรแถวบ้านเป็นยังไงบ้างคะ ไม่สะดวกก็ไม่ต้องตอบนะคะ"]
 REPLY = "ขอบคุณที่เล่าค่ะ น้ำท่วมสูงแค่ไหนคะ"
+REASON = "พยากรณ์อากาศบอกว่าวันนี้อาจมีฝนแถวบ้าน"
 
 
 def at(hour: int, minute: int = 0) -> datetime:
@@ -120,8 +121,7 @@ async def test_rain_is_scheduled_after_one_am(client, db, ai_chats, pushes):
 
     row = await broadcast_row(db)
     assert row["status"] == "scheduled"
-    assert row["reason"] == "พยากรณ์อากาศบอกว่าวันนี้อาจมีฝนช่วง 14:00 ถึง 15:00 น."
-    assert json.loads(row["forecast"])["date"] == "2026-10-23"
+    assert row["reason"] == REASON
     assert pushes == []
     assert ai_chats == []
 
@@ -138,8 +138,7 @@ async def test_greets_everyone_at_eight(client, db, redis, ai_chats, pushes):
     assert seen[0][0] == "system"
     assert seen[1] == (
         "user",
-        "[ระบบ: เมืองทักผู้แจ้งไปก่อน ผู้แจ้งยังไม่ได้พิมพ์อะไร เหตุที่ทัก: "
-        "พยากรณ์อากาศบอกว่าวันนี้อาจมีฝนช่วง 14:00 ถึง 15:00 น.]",
+        f"[ระบบ: เมืองทักผู้แจ้งไปก่อน ผู้แจ้งยังไม่ได้พิมพ์อะไร เหตุที่ทัก: {REASON}]",
     )
 
     opened = await broadcast_session(db, user_id)
@@ -173,7 +172,7 @@ async def test_greets_only_once_a_day(client, db, ai_chats, pushes):
 async def test_resumes_after_shutdown_without_greeting_twice(client, db, ai_chats, pushes, monkeypatch):
     from app.services import broadcast
 
-    first = await add_user(db, "U_a")
+    await add_user(db, "U_a")
     await add_user(db, "U_b")
     real_open = broadcast.open_session_for
     opens = []
@@ -187,14 +186,18 @@ async def test_resumes_after_shutdown_without_greeting_twice(client, db, ai_chat
     monkeypatch.setattr(broadcast, "open_session_for", shutdown_before_second)
     with pytest.raises(asyncio.CancelledError):
         await tick(at(8, 0))
-    assert [to for to, _ in pushes] == ["U_a"]
+    [(first, _)] = pushes
     assert (await broadcast_row(db))["status"] == "scheduled"
 
-    await db.execute("UPDATE sessions SET status = 'closed', closed_at = now() WHERE user_id = $1", first)
+    await db.execute(
+        "UPDATE sessions SET status = 'closed', closed_at = now() "
+        "WHERE user_id = (SELECT user_id FROM users WHERE line_user_id = $1)",
+        first,
+    )
     monkeypatch.setattr(broadcast, "open_session_for", real_open)
     await tick(at(8, 1))
 
-    assert pushes == [("U_a", GREETING), ("U_b", GREETING)]
+    assert sorted(pushes) == [("U_a", GREETING), ("U_b", GREETING)]
     assert len(ai_chats) == 1
     assert (await broadcast_row(db))["status"] == "sent"
 
@@ -206,7 +209,7 @@ async def test_everyone_gets_the_same_message_written_once(client, db, redis, ai
 
     await tick(at(8, 0))
 
-    assert pushes == [("U_a", GREETING), ("U_b", GREETING)]
+    assert sorted(pushes) == [("U_a", GREETING), ("U_b", GREETING)]
     assert len(ai_chats) == 1
     assert json.loads((await broadcast_row(db))["greeting"])["texts"] == GREETING
     for user_id in (first, second):
@@ -243,7 +246,7 @@ async def test_skips_whoever_is_talking(client, db, ai_chats, pushes):
 
     await tick(at(8, 0))
 
-    assert [to for to, _ in pushes] == ["U_a", "U_c"]
+    assert sorted(to for to, _ in pushes) == ["U_a", "U_c"]
     assert await broadcast_session(db, busy) is None
 
 
@@ -298,7 +301,7 @@ async def test_one_failure_does_not_stop_the_rest(client, db, pushes, monkeypatc
 
     await tick(at(8, 0))
 
-    assert pushes == [("U_b", GREETING)]
+    assert [message for _, message in pushes] == [GREETING]
     assert (await broadcast_row(db))["status"] == "sent"
 
 
@@ -350,7 +353,7 @@ async def test_unanswered_greeting_waits_then_closes_without_analysis(client, db
     assert await db.fetchval("SELECT count(*) FROM ai_calls WHERE kind = 'analyser'") == 0
 
 
-# --- พยากรณ์จริง (#252): นับเฉพาะชั่วโมงที่ทักได้ · ร้อนเกิน 35 องศาก็นับ · ชุมชนที่ดึงพยากรณ์ไม่ได้ข้าม ---
+# --- พยากรณ์จริง (#252): นับเฉพาะฝนในชั่วโมงที่ทักได้ · ร้อนอย่างเดียวไม่นับ · ชุมชนที่ดึงพยากรณ์ไม่ได้ข้าม ---
 
 
 def hour(clock: str, label: str = "มีเมฆมากขึ้น", rainfall: float = 0, temperature: float = 30.0) -> dict:
@@ -397,25 +400,13 @@ async def test_rain_at_night_is_not_a_reason(client, db, forecast):
     assert (row["status"], row["reason"]) == ("skipped", None)
 
 
-async def test_heat_over_35_is_a_reason(client, db, forecast):
+async def test_heat_without_rain_is_not_a_reason(client, db, forecast):
     forecast[0] = forecast_of(community(hour("12:00", temperature=36.2), hour("13:00", temperature=37.0)))
 
     await tick(at(1, 0))
 
     row = await broadcast_row(db)
-    assert row["status"] == "scheduled"
-    assert row["reason"] == "พยากรณ์อากาศบอกว่าวันนี้อากาศอาจร้อนเกิน 35 องศาช่วง 12:00 ถึง 13:00 น."
-
-
-async def test_rain_and_heat_are_both_in_the_reason(client, db, forecast):
-    forecast[0] = forecast_of(community(hour("11:00", temperature=35.5), hour("15:00", "มีฝน", 2.0)))
-
-    await tick(at(1, 0))
-
-    assert (await broadcast_row(db))["reason"] == (
-        "พยากรณ์อากาศบอกว่าวันนี้อาจมีฝนช่วง 15:00 ถึง 15:00 น. "
-        "และอากาศอาจร้อนเกิน 35 องศาช่วง 11:00 ถึง 11:00 น."
-    )
+    assert (row["status"], row["reason"]) == ("skipped", None)
 
 
 async def test_community_without_forecast_is_skipped(client, db, forecast):
@@ -425,7 +416,7 @@ async def test_community_without_forecast_is_skipped(client, db, forecast):
     await tick(at(1, 0))
 
     row = await broadcast_row(db)
-    assert row["reason"] == "พยากรณ์อากาศบอกว่าวันนี้อาจมีฝนช่วง 14:00 ถึง 14:00 น."
+    assert (row["status"], row["reason"]) == ("scheduled", REASON)
 
 
 async def test_reads_the_daily_file_from_forecast_url(client, db, monkeypatch):
@@ -462,53 +453,7 @@ async def test_file_not_uploaded_yet_tries_again_later(client, db, monkeypatch):
     assert await broadcast_row(db) is None
 
 
-# --- ใครได้ข้อความ: วันละไม่เกิน BROADCAST_DAILY_LIMIT คน · ไม่เกินข้อความที่เหลือของเดือนใน LINE ---
-# ห่างกันอย่างน้อย BROADCAST_GAP_DAYS วัน · ไม่ตอบติดกัน BROADCAST_MAX_UNANSWERED ครั้งไม่ทักอีก
-# ยังไม่เคยได้ก่อน แล้วคนที่ได้ครั้งล่าสุดนานสุด · เท่ากันใช้คนที่ยอมรับ PDPA ก่อน
-
-
-async def past_broadcast(db, user_id, days_ago: int, replied: bool = False):
-    """การทักของวันก่อน ๆ ที่ใบปิดไปแล้ว · replied = ผู้แจ้งตอบกลับมาในใบนั้น"""
-    day = (DAY - timedelta(days=days_ago)).date()
-    broadcast_id = await db.fetchval(
-        """
-        INSERT INTO broadcasts (forecast_date, forecast, reason, status) VALUES ($1, '{}', 'ฝน', 'sent')
-        ON CONFLICT (forecast_date) DO UPDATE SET status = 'sent' RETURNING broadcast_id
-        """,
-        day,
-    )
-    session_id = await db.fetchval(
-        """
-        INSERT INTO sessions (user_id, broadcast_id, status, started_at, last_message_at, closed_at)
-        VALUES ($1, $2, 'analysed', now() - make_interval(days => $3), now() - make_interval(days => $3), now())
-        RETURNING session_id
-        """,
-        user_id,
-        broadcast_id,
-        days_ago,
-    )
-    if replied:
-        await db.execute(
-            "INSERT INTO messages (session_id, role, type, content, status) VALUES ($1, 'user', 'text', 'ค่ะ', 'answered')",
-            session_id,
-        )
-
-
-async def own_session(db, user_id, days_ago: int):
-    """ใบที่ผู้แจ้งทักมาเองแล้วปิดไปแล้ว"""
-    session_id = await db.fetchval(
-        """
-        INSERT INTO sessions (user_id, status, started_at, last_message_at, closed_at)
-        VALUES ($1, 'analysed', now() - make_interval(days => $2), now() - make_interval(days => $2), now())
-        RETURNING session_id
-        """,
-        user_id,
-        days_ago,
-    )
-    await db.execute(
-        "INSERT INTO messages (session_id, role, type, content, status) VALUES ($1, 'user', 'text', 'น้ำท่วม', 'answered')",
-        session_id,
-    )
+# --- ใครได้ข้อความ: สุ่มวันละไม่เกิน BROADCAST_DAILY_LIMIT คน · ไม่เกินข้อความที่เหลือของเดือนใน LINE ---
 
 
 @pytest.fixture
@@ -528,7 +473,8 @@ async def test_no_more_than_the_daily_limit(client, db, ai_chats, pushes, daily_
 
     await tick(at(8, 0))
 
-    assert [to for to, _ in pushes] == ["U_a", "U_b"]
+    picked = [to for to, _ in pushes]
+    assert len(picked) == len(set(picked)) == 2
     assert (await broadcast_row(db))["status"] == "sent"
 
 
@@ -542,7 +488,7 @@ async def test_resume_sends_only_what_is_left_of_the_daily_limit(client, db, ai_
 
     await tick(at(8, 1))
 
-    assert [to for to, _ in pushes] == ["U_a"]
+    assert len(pushes) == 1
 
 
 async def test_no_more_than_line_messages_left_this_month(client, db, ai_chats, pushes, line_quota):
@@ -552,7 +498,7 @@ async def test_no_more_than_line_messages_left_this_month(client, db, ai_chats, 
 
     await tick(at(8, 0))
 
-    assert [to for to, _ in pushes] == ["U_a"]
+    assert len(pushes) == 1
 
 
 async def test_no_line_messages_left_sends_nothing(client, db, ai_chats, pushes, line_quota):
@@ -563,62 +509,6 @@ async def test_no_line_messages_left_sends_nothing(client, db, ai_chats, pushes,
 
     assert pushes == []
     assert ai_chats == []
-
-
-async def test_waits_gap_days_between_messages(client, db, ai_chats, pushes):
-    recent = await add_user(db, "U_recent")
-    old = await add_user(db, "U_old")
-    await past_broadcast(db, recent, days_ago=3, replied=True)
-    await past_broadcast(db, old, days_ago=8, replied=True)
-
-    await tick(at(8, 0))
-
-    assert [to for to, _ in pushes] == ["U_old"]
-
-
-async def test_never_messaged_first_then_oldest_message(client, db, ai_chats, pushes, daily_limit):
-    daily_limit(2)
-    newer = await add_user(db, "U_newer")
-    older = await add_user(db, "U_older")
-    await add_user(db, "U_never")
-    await past_broadcast(db, newer, days_ago=10, replied=True)
-    await past_broadcast(db, older, days_ago=20, replied=True)
-
-    await tick(at(8, 0))
-
-    assert [to for to, _ in pushes] == ["U_never", "U_older"]
-
-
-async def test_stops_after_three_ignored_in_a_row(client, db, ai_chats, pushes):
-    ignored = await add_user(db, "U_ignored")
-    for days_ago in (30, 20, 10):
-        await past_broadcast(db, ignored, days_ago)
-
-    await tick(at(8, 0))
-
-    assert pushes == []
-
-
-async def test_own_message_resets_the_ignored_count(client, db, ai_chats, pushes):
-    came_back = await add_user(db, "U_came_back")
-    for days_ago in (40, 30, 20):
-        await past_broadcast(db, came_back, days_ago)
-    await own_session(db, came_back, days_ago=15)
-
-    await tick(at(8, 0))
-
-    assert [to for to, _ in pushes] == ["U_came_back"]
-
-
-async def test_reply_resets_the_ignored_count(client, db, ai_chats, pushes):
-    replied = await add_user(db, "U_replied")
-    await past_broadcast(db, replied, days_ago=30)
-    await past_broadcast(db, replied, days_ago=20)
-    await past_broadcast(db, replied, days_ago=10, replied=True)
-
-    await tick(at(8, 0))
-
-    assert [to for to, _ in pushes] == ["U_replied"]
 
 
 async def test_blocked_bot_gets_nothing_until_follow_again(client, db, ai_chats, pushes):

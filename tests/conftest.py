@@ -28,8 +28,6 @@ os.environ["DASHBOARD_API_KEY"] = "test-api-key-shared-with-dashboard-team"
 # ทักไปก่อน: ใช้ mock_forecast.json ไม่ยิงไฟล์พยากรณ์จริง · เพดานตามค่าตั้งต้น ไม่ใช่ค่าใน .env ของเครื่อง
 os.environ["FORECAST_URL"] = ""
 os.environ["BROADCAST_DAILY_LIMIT"] = "10"
-os.environ["BROADCAST_GAP_DAYS"] = "7"
-os.environ["BROADCAST_MAX_UNANSWERED"] = "3"
 os.environ["BROADCAST_WAIT_HOURS"] = "24"
 
 SCHEMA = Path(__file__).resolve().parent.parent / "schema.sql"

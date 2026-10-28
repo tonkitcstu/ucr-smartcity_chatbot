@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from app.models.answer import ChatAnswer
 
 
-# แถวของวันหนึ่งใน broadcasts · ไม่มีคำตอบดิบของพยากรณ์ เพราะโค้ดไม่ได้ใช้ต่อ (เก็บไว้ให้คนเปิดดูในฐาน)
+# แถวของวันหนึ่งใน broadcasts
 class Broadcast(BaseModel):
     broadcast_id: UUID
     forecast_date: date

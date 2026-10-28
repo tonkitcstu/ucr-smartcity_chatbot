@@ -29,9 +29,10 @@ async def handle_webhook(body: str, signature: str) -> None:
 
 
 async def on_follow(event: FollowEvent) -> None:
-    """ส่งการ์ด PDPA · ยังไม่เก็บอะไรของเขา · เคยยอมรับแล้วเลิกบล็อก → ได้ข้อความทักอีก"""
-    await user.mark_following(event.source.user_id)
+    """ส่งการ์ด PDPA · ยังไม่เก็บอะไรของเขา · เคยยอมรับแล้วเลิกบล็อก → ได้ข้อความทักอีก
+    ตอบการ์ดก่อนแตะฐาน · ฐานมีปัญหาผู้แจ้งก็ยังได้การ์ด"""
     await line.reply(event.reply_token, [pdpa.card()])
+    await user.mark_following(event.source.user_id)
 
 
 async def on_postback(event: PostbackEvent) -> None:

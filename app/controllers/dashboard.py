@@ -65,6 +65,7 @@ async def read_transcript(session_id: UUID) -> list[DashboardMessage]:
             content=message.content,
             lat=message.lat,
             lng=message.lng,
+            status=message.status,
             attachment=link(message.attachment_id) if message.attachment_id else None,
         )
         for message in transcript

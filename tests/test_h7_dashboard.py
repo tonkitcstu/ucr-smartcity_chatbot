@@ -514,6 +514,22 @@ async def test_transcript_keeps_skipped_messages(client, db, tmp_path):
     assert [m["message_id"] for m in response.json()] == [str(message_id) for message_id in talk.message_ids]
 
 
+async def test_transcript_tells_which_messages_were_skipped(client, db, tmp_path):
+    """แดชบอร์ดแยกได้ว่าข้อความไหนบอทไม่ได้ตอบ · ช่อง status ตรงกับ PSQL"""
+    talk = await conversation(
+        db,
+        tmp_path,
+        ("user", "text", "สแปม"),
+        ("user", "text", "น้ำท่วมหน้าบ้าน"),
+        ("assistant", "text", "ท่วมสูงประมาณไหนคะ"),
+    )
+    await db.execute("UPDATE messages SET status = 'skipped' WHERE message_id = $1", talk.message_ids[0])
+
+    response = await client.get(f"{TRANSCRIPTS}/{talk.session_id}", headers=api_key())
+
+    assert [m["status"] for m in response.json()] == ["skipped", "answered", "answered"]
+
+
 # --- ตัวกรองความรุนแรงกับช่วงวัน + รายงานใบเดียว — S33 · spec docs/designs/09-modules/h7-dashboard-api.md ---
 
 

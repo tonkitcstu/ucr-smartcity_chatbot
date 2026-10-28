@@ -34,4 +34,5 @@ class DashboardMessage(BaseModel):
     content: str | None
     lat: float | None
     lng: float | None
+    status: Literal["pending", "answered", "skipped"]
     attachment: AttachmentLink | None

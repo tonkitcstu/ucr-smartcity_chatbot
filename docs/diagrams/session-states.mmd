@@ -1,0 +1,69 @@
+---
+title: Session States
+config:
+  theme: base
+  themeVariables:
+    fontFamily: "Inter, Helvetica, Arial, sans-serif"
+    fontSize: 14px
+    lineColor: "#64748b"
+  flowchart:
+    curve: basis
+    nodeSpacing: 40
+    rankSpacing: 70
+---
+
+flowchart LR
+    %% ---------- style: edit only this block to change the look ----------
+    classDef point     fill:#334155,stroke:#334155,color:#ffffff
+    classDef idle      fill:#f1f5f9,stroke:#64748b,color:#1e293b
+    classDef busy      fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef closing   fill:#ffedd5,stroke:#ea580c,color:#7c2d12
+    classDef blocked   fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+    classDef done      fill:#e0e7ff,stroke:#4f46e5,color:#1e1b4b
+    classDef env       fill:#f8fafc,stroke:#64748b
+    %% --------------------------------------------------------------------
+    %% solid arrow = state changes · dashed arrow = state stays the same
+    %% every arrow label: who changes it · when
+
+    start@{ shape: circle, label: "start" }
+    analysed@{ shape: dbl-circ, label: "analysed" }
+
+    subgraph talking["open session"]
+        direction LR
+        idle@{ shape: rounded, label: "IDLE<br/>nobody is working on it" }
+        buffering@{ shape: rounded, label: "BUFFERING<br/>collecting messages" }
+        processing@{ shape: rounded, label: "PROCESSING<br/>Gemini is answering" }
+        closing@{ shape: rounded, label: "CLOSING<br/>being closed" }
+    end
+    suspended@{ shape: rounded, label: "SUSPENDED<br/>24 hours" }
+    closed@{ shape: rounded, label: "closed<br/>waiting for analyse job" }
+
+    class start point
+    class idle idle
+    class buffering,processing busy
+    class closing closing
+    class suspended blocked
+    class closed,analysed done
+    class talking env
+
+    %% open a session
+    start --> |"webhook · user has no open session,<br/>new message opens one<br/>broadcaster · forecast day"| idle
+
+    %% chat loop
+    idle --> |"webhook · new message<br/>push chat job"| buffering
+    buffering -.-> |"webhook · new message<br/>add to buffer, no new job"| buffering
+    buffering --> |"worker · no new message<br/>for SILENCE_SECONDS"| processing
+    processing -.-> |"webhook · new message<br/>add to buffer"| processing
+    processing --> |"worker · reply sent<br/>or fallback text sent"| idle
+    idle --> |"worker · messages came in<br/>while Gemini was answering<br/>push chat job"| buffering
+
+    %% close
+    idle --> |"sweeper · silent over CLOSE_AFTER_MINUTES<br/>broadcast with no answer: BROADCAST_WAIT_HOURS"| closing
+    closing --> |"sweeper · still silent"| closed
+    closing --> |"sweeper · a message came in<br/>while closing"| idle
+    closed --> |"worker · analyse job<br/>0 to n reports"| analysed
+
+    %% suspend
+    talking --> |"webhook · buffer full<br/>buffered messages marked skipped"| suspended
+    suspended -.-> |"webhook · new message<br/>saved as skipped, fixed reply"| suspended
+    suspended --> |"nobody · 24 hours pass"| idle

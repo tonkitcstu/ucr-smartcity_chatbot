@@ -43,6 +43,13 @@ def follow_event(user_id="U_test", reply_token="rt-follow", event_id="ev-follow"
     return _event("follow", user_id, reply_token, event_id, follow={"isUnblocked": False})
 
 
+# ผู้แจ้งบล็อกบอท · LINE ไม่ส่ง replyToken มากับ event นี้
+def unfollow_event(user_id="U_test", event_id="ev-unfollow"):
+    event = _event("unfollow", user_id, "", event_id)
+    del event["replyToken"]
+    return event
+
+
 def postback_event(data, user_id="U_test", reply_token="rt-postback", event_id="ev-postback"):
     return _event("postback", user_id, reply_token, event_id, postback={"data": data})
 

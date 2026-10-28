@@ -98,8 +98,8 @@ curl -sS -G "$BASE/api/dashboard/reports" -H "Authorization: Bearer $KEY" \
 | `desc` | สรุปเรื่องที่ตัววิเคราะห์เขียน |
 | `place` | ตำแหน่งตามคำของผู้แจ้ง · ไม่ได้บอกเป็นคำ = `null` |
 | `lat` `lng` | หมุดที่ผู้แจ้งปัก · ไม่ได้ปัก = `null` |
-| `started_at` | เวลาที่เริ่มคุยเรื่องนี้ |
-| `created_at` | เวลาที่รายงานถูกสร้าง (หลังบทสนทนาเงียบไป 2 ชั่วโมง) |
+| `started_at` | เวลาที่เปิดบทสนทนา · รายงานจากบทสนทนาเดียวกันได้เวลาเดียวกัน · บอททักไปก่อน = เวลาที่บอททัก |
+| `created_at` | เวลาที่รายงานถูกสร้าง (หลังบทสนทนาถูกปิด) |
 
 `severity`
 
@@ -196,6 +196,7 @@ curl -sS "$BASE/api/dashboard/transcripts/a41d77c3-..." -H "Authorization: Beare
     "content": "น้ำท่วมหน้าบ้านอีกแล้ว",
     "lat": null,
     "lng": null,
+    "status": "answered",
     "attachment": null
   },
   {
@@ -205,6 +206,7 @@ curl -sS "$BASE/api/dashboard/transcripts/a41d77c3-..." -H "Authorization: Beare
     "content": null,
     "lat": null,
     "lng": null,
+    "status": "answered",
     "attachment": {"attachment_id": "0c9e...", "url": "/api/dashboard/attachments/0c9e..."}
   },
   {
@@ -214,6 +216,7 @@ curl -sS "$BASE/api/dashboard/transcripts/a41d77c3-..." -H "Authorization: Beare
     "content": "ท่วมสูงประมาณไหนคะ",
     "lat": null,
     "lng": null,
+    "status": "answered",
     "attachment": null
   },
   {
@@ -223,6 +226,7 @@ curl -sS "$BASE/api/dashboard/transcripts/a41d77c3-..." -H "Authorization: Beare
     "content": null,
     "lat": 13.75,
     "lng": 100.5,
+    "status": "answered",
     "attachment": null
   },
   {
@@ -232,12 +236,14 @@ curl -sS "$BASE/api/dashboard/transcripts/a41d77c3-..." -H "Authorization: Beare
     "content": "cony, sally, Staring, hi, wave, Hello",
     "lat": null,
     "lng": null,
+    "status": "answered",
     "attachment": null
   }
 ]
 ```
 
 `type` เป็น `text` · `image` · `location` · `sticker`
+`status` เป็น `answered` (บอทตอบแล้ว) · `pending` (ยังรอบอทตอบ) · `skipped` (บอทไม่ตอบ เช่น ส่งตอนถูกพัก · ตัววิเคราะห์ไม่เห็น)
 แถว `sticker`: `content` คือคำที่ LINE ใช้บรรยายสติกเกอร์ (ไม่ใช่คำที่ผู้แจ้งพิมพ์) · LINE ไม่ส่งมาก็เป็น `null`
 
 404 ไม่มี session นี้

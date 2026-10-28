@@ -1,0 +1,89 @@
+---
+title: Message to Report
+---
+
+sequenceDiagram
+    autonumber
+    actor reporter as Reporter
+    participant line as LINE
+    participant webhook as App: webhook<br/>controllers/line.py
+    participant worker as App: worker<br/>workers/worker.py
+    participant sweeper as App: sweeper<br/>workers/sweeper.py
+    participant redis as Redis
+    participant postgres as PostgreSQL
+    participant gemini as Gemini
+
+    %% 1. Message comes in
+    rect rgba(120, 160, 255, 0.12)
+        reporter ->> line: text, image, location pin, sticker
+        line ->> webhook: POST /webhook/line
+        webhook ->> postgres: find user by LINE id
+        alt user has not accepted PDPA
+            webhook ->> line: reply PDPA card
+        else user accepted PDPA
+            webhook ->> postgres: open session, save message
+            alt session SUSPENDED or buffer full
+                webhook ->> postgres: mark buffered messages skipped
+                webhook ->> redis: clear buffer, set SUSPENDED for 24 hours
+                webhook ->> line: reply fixed "too many messages" text
+            else tokens used today over user or system limit
+                webhook ->> line: reply fixed "quota reached" text
+            else
+                webhook ->> redis: add message to buffer, set last_message_at
+                webhook ->> redis: IDLE to BUFFERING
+                opt state changed in this call
+                    webhook ->> redis: push chat job
+                end
+            end
+        end
+        webhook -->> line: 200 OK
+    end
+
+    %% 2. Worker answers
+    rect rgba(120, 220, 160, 0.12)
+        worker ->> redis: pop chat job
+        loop until SILENCE_SECONDS pass with no new message
+            worker ->> redis: read last_message_at
+        end
+        worker ->> redis: BUFFERING to PROCESSING
+        worker ->> redis: read buffer
+        worker ->> line: show loading
+        opt buffer has images
+            worker ->> line: download image
+            worker ->> postgres: save attachment, file goes to uploads/
+        end
+        worker ->> postgres: read active ai_config
+        worker ->> redis: read history
+        worker ->> gemini: chat prompt + history + new messages
+        gemini -->> worker: texts + buttons JSON
+        worker ->> postgres: save ai_call
+        alt Gemini answered within 50 seconds
+            worker ->> line: reply with latest reply_token
+            line ->> reporter: bot messages + buttons
+            worker ->> postgres: save bot messages, mark messages answered
+            worker ->> redis: add to history, drop answered messages from buffer
+        else Gemini failed or took over 50 seconds
+            worker ->> line: reply fixed "system error" text
+        end
+        worker ->> redis: PROCESSING to IDLE
+        opt messages came in while Gemini was answering
+            worker ->> redis: IDLE to BUFFERING, push chat job
+        end
+    end
+
+    %% 3. Session closes and becomes reports
+    rect rgba(255, 190, 110, 0.12)
+        loop every SWEEP_EVERY_SECONDS
+            sweeper ->> postgres: find open sessions silent over CLOSE_AFTER_MINUTES
+            sweeper ->> redis: IDLE to CLOSING
+            sweeper ->> postgres: session to closed
+            sweeper ->> redis: delete all keys of the session
+            sweeper ->> redis: push analyse job
+        end
+        worker ->> redis: pop analyse job
+        worker ->> postgres: read transcript without skipped messages
+        worker ->> gemini: analyser prompt + transcript
+        gemini -->> worker: 0 to n reports JSON, up to 3 tries
+        worker ->> postgres: save reports with lat/lng, link photos
+        worker ->> postgres: session to analysed
+    end

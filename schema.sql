@@ -19,9 +19,7 @@ CREATE TABLE broadcasts (
     broadcast_id  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     -- วันตามเวลาไทยที่พยากรณ์พูดถึง
     forecast_date date NOT NULL UNIQUE,
-    -- คำตอบดิบของพยากรณ์อากาศทั้งก้อน
-    forecast      jsonb NOT NULL,
-    -- เหตุที่ทัก ส่งให้ตัวคุยใช้แต่งข้อความ เช่น ฝนจะตกช่วงบ่าย · null = วันนี้ไม่มีเหตุให้ทัก
+    -- เหตุที่ทัก ส่งให้ตัวคุยใช้แต่งข้อความ เช่น ฝนอาจตกแถวบ้าน · null = วันนี้ไม่มีเหตุให้ทัก
     reason        text,
     -- ข้อความทักที่ตัวคุยแต่งครั้งเดียวของวันนั้น {"texts": [...], "buttons": [...]} ทุกคนได้ข้อความนี้ · null = ยังไม่ได้แต่ง
     greeting      jsonb,

@@ -384,16 +384,15 @@ def to_broadcast(row) -> Broadcast:
 
 # จดพยากรณ์ของวันนั้น · มีเหตุให้ทัก → scheduled · ไม่มี → skipped
 # วันนั้นมีแถวแล้ว (อีก process จดไปก่อน) → คืนแถวเดิม ไม่เขียนทับ
-async def insert_broadcast(day: date, forecast: dict, reason: str | None) -> Broadcast:
+async def insert_broadcast(day: date, reason: str | None) -> Broadcast:
     row = await pool.fetchrow(
         """
-        INSERT INTO broadcasts (forecast_date, forecast, reason, status)
-        VALUES ($1, $2::jsonb, $3, CASE WHEN $3::text IS NULL THEN 'skipped' ELSE 'scheduled' END)
+        INSERT INTO broadcasts (forecast_date, reason, status)
+        VALUES ($1, $2, CASE WHEN $2::text IS NULL THEN 'skipped' ELSE 'scheduled' END)
         ON CONFLICT (forecast_date) DO UPDATE SET forecast_date = EXCLUDED.forecast_date
         RETURNING broadcast_id, forecast_date, reason, status, greeting
         """,
         day,
-        json.dumps(forecast, ensure_ascii=False),
         reason,
     )
     return to_broadcast(row)
@@ -422,37 +421,21 @@ async def count_broadcast_sessions(broadcast_id: UUID) -> int:
     return await pool.fetchval("SELECT count(*) FROM sessions WHERE broadcast_id = $1", broadcast_id)
 
 
-# คนที่ทักได้ ไม่เกิน count คน
-#   ยังติดตามบอท · ไม่มีใบเปิดอยู่ · ไม่ได้ข้อความทักในช่วง gap_days วันที่ผ่านมา
-#   ใบล่าสุด max_unanswered ใบ ไม่ได้เป็นใบที่บอททักแล้วผู้แจ้งไม่ตอบทั้งหมด
-# เรียง: ยังไม่เคยได้ก่อน → ได้ครั้งล่าสุดนานสุดก่อน → ยอมรับ PDPA ก่อน
-async def select_broadcast_recipients(gap_days: int, max_unanswered: int, count: int) -> list[User]:
+# สุ่มคนที่ทักได้ ไม่เกิน count คน · ยังติดตามบอท · ไม่มีใบเปิดอยู่ · ยังไม่ได้ใบของการทักครั้งนี้
+async def select_broadcast_recipients(broadcast_id: UUID, count: int) -> list[User]:
     rows = await pool.fetch(
         """
         SELECT u.user_id, u.line_user_id, u.pdpa_accepted_at
         FROM users u
-        LEFT JOIN LATERAL (
-            SELECT max(s.started_at) AS at FROM sessions s
-            WHERE s.user_id = u.user_id AND s.broadcast_id IS NOT NULL
-        ) last_broadcast ON true
         WHERE u.blocked_at IS NULL
-          AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = u.user_id AND s.status = 'open')
-          AND (last_broadcast.at IS NULL OR last_broadcast.at < now() - make_interval(days => $1))
-          AND NOT coalesce((
-              SELECT count(*) = $2 AND bool_and(recent.ignored)
-              FROM (
-                  SELECT s.broadcast_id IS NOT NULL AND NOT EXISTS (
-                      SELECT 1 FROM messages m WHERE m.session_id = s.session_id AND m.role = 'user'
-                  ) AS ignored
-                  FROM sessions s WHERE s.user_id = u.user_id
-                  ORDER BY s.started_at DESC LIMIT $2
-              ) recent
-          ), false)
-        ORDER BY last_broadcast.at ASC NULLS FIRST, u.created_at
-        LIMIT $3
+          AND NOT EXISTS (
+              SELECT 1 FROM sessions s
+              WHERE s.user_id = u.user_id AND (s.status = 'open' OR s.broadcast_id = $1)
+          )
+        ORDER BY random()
+        LIMIT $2
         """,
-        gap_days,
-        max_unanswered,
+        broadcast_id,
         count,
     )
     return [User(**row) for row in rows]

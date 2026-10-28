@@ -1,5 +1,5 @@
 ---
-title: Broadcast — Bot Messages First on Weather Days
+title: Broadcast — Bot Messages First on Rain Days
 config:
   theme: base
   themeVariables:
@@ -31,16 +31,16 @@ flowchart TB
         direction TB
         fetch["download today's file<br/>FORECAST_URL · empty = mock_forecast.json"]
         ready{"file uploaded?"}
-        reason{"any hour from BROADCAST_SEND_AT<br/>to BROADCAST_SEND_UNTIL<br/>with rain or over 35°C?<br/>communities with error are skipped"}
-        scheduled["today = scheduled<br/>reason = rain hours and hot hours"]
+        reason{"rain in any community<br/>from BROADCAST_SEND_AT to BROADCAST_SEND_UNTIL?<br/>communities with error are skipped"}
+        scheduled["today = scheduled<br/>reason = it may rain today"]
     end
 
     subgraph pick["2 · pick people · from BROADCAST_SEND_AT 08:00"]
         direction TB
         late{"before BROADCAST_SEND_UNTIL 20:00?"}
         howmany["how many today =<br/>BROADCAST_DAILY_LIMIT 10 minus already sent today<br/>no more than LINE messages left this month"]
-        who["who can get one:<br/>still follows the bot<br/>no open session<br/>no broadcast in last BROADCAST_GAP_DAYS 7<br/>did not ignore the last BROADCAST_MAX_UNANSWERED 3"]
-        order["order: never messaged first,<br/>then oldest broadcast first,<br/>random among equals · take how many"]
+        who["who can get one:<br/>still follows the bot<br/>no open session<br/>no message from today's broadcast yet"]
+        order["pick at random · take how many"]
     end
 
     subgraph send["3 · message each picked person"]
@@ -57,7 +57,7 @@ flowchart TB
     subgraph after["4 · after the message"]
         direction TB
         reply["reporter replies within BROADCAST_WAIT_HOURS 24<br/>same session · Gemini sees the reason and its message<br/>then normal chat, then reports"]
-        silent["no reply in BROADCAST_WAIT_HOURS 24<br/>sweeper closes the session · no analysis<br/>counts as 1 ignored broadcast"]
+        silent["no reply in BROADCAST_WAIT_HOURS 24<br/>sweeper closes the session · no analysis"]
     end
 
     retry(["try again next check"])

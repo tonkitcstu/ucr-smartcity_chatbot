@@ -45,7 +45,7 @@ flowchart LR
                     routes@{ shape: rect, label: "«component»<br/>FastAPI routes<br/>/webhook/line<br/>/api/dashboard/*<br/>/health" }
                     worker@{ shape: rect, label: "«component»<br/>worker<br/>chat jobs, analyse jobs" }
                     sweeper@{ shape: rect, label: "«component»<br/>sweeper<br/>closes silent sessions" }
-                    broadcaster@{ shape: rect, label: "«component»<br/>broadcaster<br/>off unless BROADCAST_ENABLED<br/>up to 10 people a day" }
+                    broadcaster@{ shape: rect, label: "«component»<br/>broadcaster<br/>off unless BROADCAST_ENABLED<br/>up to 10 random people a day" }
                 end
                 forecast@{ shape: doc, label: "«artifact»<br/>mock_forecast.json<br/>when FORECAST_URL is empty" }
                 uploads@{ shape: lin-cyl, label: "«volume»<br/>uploads<br/>photo files" }
@@ -79,7 +79,7 @@ flowchart LR
     line --- |"HTTPS · ngrok on dev<br/>to app: webhook new message, follow, unfollow, postback<br/>from app: reply, push, show loading,<br/>download photo, read monthly message quota"| app_container
     dashboard --- |"HTTPS · Bearer DASHBOARD_API_KEY<br/>to app: GET reports, attachments, transcripts<br/>from app: reports JSON, transcripts JSON, photo files"| app_container
     app_container --- |"HTTPS<br/>to Gemini: chat history + new messages,<br/>closed session transcript, broadcast reason<br/>from Gemini: chat reply, reports JSON,<br/>first message"| gemini
-    app_container --- |"HTTPS · FORECAST_URL<br/>to app: rain and hot hours per community"| forecastfile
+    app_container --- |"HTTPS · FORECAST_URL<br/>to app: rain hours per community"| forecastfile
 
     %% «use» dependencies inside the host
     routes -. "save users, sessions, messages<br/>read reports for dashboard" .-> postgres

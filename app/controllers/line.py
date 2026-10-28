@@ -8,6 +8,7 @@ from linebot.v3.webhooks import (
     PostbackEvent,
     StickerMessageContent,
     TextMessageContent,
+    UnfollowEvent,
 )
 
 from app.clients import line
@@ -19,6 +20,8 @@ async def handle_webhook(body: str, signature: str) -> None:
     for event in line.parse_events(body, signature):
         if isinstance(event, FollowEvent):
             await on_follow(event)
+        elif isinstance(event, UnfollowEvent):
+            await user.mark_blocked(event.source.user_id)
         elif isinstance(event, PostbackEvent):
             await on_postback(event)
         elif isinstance(event, MessageEvent):
@@ -26,7 +29,8 @@ async def handle_webhook(body: str, signature: str) -> None:
 
 
 async def on_follow(event: FollowEvent) -> None:
-    """ส่งการ์ด PDPA · ยังไม่เก็บอะไรของเขา"""
+    """ส่งการ์ด PDPA · ยังไม่เก็บอะไรของเขา · เคยยอมรับแล้วเลิกบล็อก → ได้ข้อความทักอีก"""
+    await user.mark_following(event.source.user_id)
     await line.reply(event.reply_token, [pdpa.card()])
 
 

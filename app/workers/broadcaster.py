@@ -1,5 +1,6 @@
 # สมองเบื้องหลังของการทักไปก่อน
-# ทุกวันหลังตี 1 อ่านพยากรณ์อากาศ · วันไหนฝนจะตก พอถึง 8 โมงเช้าให้ตัวคุยแต่งข้อความแล้วทักผู้แจ้งทีละคน
+# ทุกวันหลังตี 1 อ่านพยากรณ์อากาศ · วันไหนฝนจะตกหรือร้อนเกิน 35 องศา พอถึง 8 โมงเช้าให้ตัวคุยแต่งข้อความแล้วทักผู้แจ้งทีละคน
+# วันละไม่เกิน BROADCAST_DAILY_LIMIT คน · แบบ docs/diagrams/broadcast-flow.mmd
 # ตื่นมาดูเวลาทุก BROADCAST_CHECK_SECONDS แบบเดียวกับตัวกวาดใบ · วันนี้ทำถึงไหนแล้วดูจากแถวของวันนี้ใน broadcasts
 #   แอปดับแล้วเปิดใหม่จึงทำต่อจากที่ค้างได้ และไม่ทักซ้ำ
 
@@ -49,10 +50,10 @@ async def tick(now: datetime) -> None:
     await broadcast.mark_sent(today)
 
 
-# ทักทีละคน · คนที่กำลังคุยกับบอทอยู่ และคนที่ได้ไปแล้วข้าม · ทักคนไหนพังก็ข้ามไปคนถัดไป
+# ทักทีละคนที่ broadcast.recipients เลือก · ทักคนไหนพังก็ข้ามไปคนถัดไป
 # งบ token ของตัวคุยทั้งระบบวันนี้หมด (#239) → หยุด คนที่เหลือไม่ได้ข้อความ
 async def greet_everyone(today: Broadcast) -> None:
-    for recipient in await broadcast.recipients():
+    for recipient in await broadcast.recipients(today):
         if await quota.is_over_system_daily_limit():
             logger.warning("งบ token ทั้งระบบของวันนี้หมด หยุดทัก")
             return

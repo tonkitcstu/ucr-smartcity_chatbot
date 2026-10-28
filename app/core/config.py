@@ -54,8 +54,10 @@ CORS_ORIGINS = [
     if origin.strip()
 ]
 
-# ทักผู้แจ้งไปก่อนเมื่อพยากรณ์บอกว่าฝนจะตก · ค่าตั้งต้นปิด เพราะเปิดแล้วส่งข้อความหาผู้แจ้งจริงทุกคน
+# ทักผู้แจ้งไปก่อนเมื่อพยากรณ์บอกว่าฝนจะตกหรือร้อนเกิน 35 องศา · ค่าตั้งต้นปิด เพราะเปิดแล้วส่งข้อความหาผู้แจ้งจริง
 BROADCAST_ENABLED = _flag("BROADCAST_ENABLED")
+# ที่อยู่ไฟล์พยากรณ์รายวันที่ Lambda อัปโหลด · {date} แทนด้วย YYYY-MM-DD · ว่าง = ใช้ mock_forecast.json
+FORECAST_URL = os.getenv("FORECAST_URL", "").strip()
 # เวลาไทยทั้งหมด · อ่านพยากรณ์ตั้งแต่ BROADCAST_FETCH_AT เพราะทีม data อัปโหลดพยากรณ์ของวันใหม่ตอนตี 1
 # ทักตั้งแต่ BROADCAST_SEND_AT · ถึง BROADCAST_SEND_UNTIL แล้วยังไม่ได้ทัก วันนั้นไม่ทักแล้ว ไม่ส่งข้อความตอนดึก
 BROADCAST_FETCH_AT = _time("BROADCAST_FETCH_AT", "01:00")
@@ -64,7 +66,13 @@ BROADCAST_SEND_UNTIL = _time("BROADCAST_SEND_UNTIL", "20:00")
 # ตัวทักตื่นมาดูเวลาทุกกี่วินาที
 BROADCAST_CHECK_SECONDS = _int("BROADCAST_CHECK_SECONDS", 60)
 # ใบที่บอททักไปก่อน รอผู้แจ้งตอบกี่ชั่วโมงก่อนปิดใบ · ตอบแล้วนับแบบใบปกติ (CLOSE_AFTER_MINUTES)
-BROADCAST_WAIT_HOURS = _int("BROADCAST_WAIT_HOURS", 12)
+BROADCAST_WAIT_HOURS = _int("BROADCAST_WAIT_HOURS", 24)
+# ทักวันละไม่เกินกี่คน · LINE แบบฟรีส่ง push ได้เดือนละ 300 ข้อความ นับตามจำนวนคนรับ · 10 คน x 30 วัน = 300
+BROADCAST_DAILY_LIMIT = _int("BROADCAST_DAILY_LIMIT", 10)
+# คนเดียวกันได้ข้อความทักห่างกันอย่างน้อยกี่วัน
+BROADCAST_GAP_DAYS = _int("BROADCAST_GAP_DAYS", 7)
+# ไม่ตอบข้อความทักติดกันกี่ครั้งแล้วไม่ทักอีก · ผู้แจ้งพิมพ์มาเองหรือตอบกลับ → นับใหม่
+BROADCAST_MAX_UNANSWERED = _int("BROADCAST_MAX_UNANSWERED", 3)
 
 DEV_ROUTES_ENABLED = _flag("DEV_ROUTES_ENABLED")
 

@@ -8,6 +8,8 @@ CREATE TABLE users (
     line_user_id     text NOT NULL UNIQUE,
     -- แถวเกิดตอนกดยอมรับเท่านั้น ก่อนกดไม่เก็บแม้แต่ line_user_id (LC1)
     pdpa_accepted_at timestamptz NOT NULL,
+    -- เวลาที่ผู้แจ้งบล็อกบอท (LINE unfollow) · null = ยังติดตามอยู่ · กลับมาติดตาม (follow) → null
+    blocked_at       timestamptz,
     created_at       timestamptz NOT NULL DEFAULT now()
 );
 

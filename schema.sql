@@ -23,6 +23,8 @@ CREATE TABLE broadcasts (
     forecast      jsonb NOT NULL,
     -- เหตุที่ทัก ส่งให้ตัวคุยใช้แต่งข้อความ เช่น ฝนจะตกช่วงบ่าย · null = วันนี้ไม่มีเหตุให้ทัก
     reason        text,
+    -- ข้อความทักที่ตัวคุยแต่งครั้งเดียวของวันนั้น {"texts": [...], "buttons": [...]} ทุกคนได้ข้อความนี้ · null = ยังไม่ได้แต่ง
+    greeting      jsonb,
     -- skipped = ไม่มีเหตุให้ทัก · scheduled = รอทัก หรือทักยังไม่ครบทุกคน · sent = ทักครบแล้ว
     -- expired = เลยเวลาที่ทักได้ของวันนั้นแล้ว เช่น แอปดับไปทั้งวัน
     status        text NOT NULL CHECK (status IN ('skipped', 'scheduled', 'sent', 'expired')),

@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.clients import line
 from app.core.config import BROADCAST_CHECK_SECONDS, BROADCAST_FETCH_AT, BROADCAST_SEND_AT, BROADCAST_SEND_UNTIL
+from app.models.answer import ChatAnswer
 from app.models.broadcast import Broadcast
 from app.models.session import Session
 from app.models.user import User
@@ -50,30 +51,39 @@ async def tick(now: datetime) -> None:
     await broadcast.mark_sent(today)
 
 
-# ทักทีละคนที่ broadcast.recipients เลือก · ทักคนไหนพังก็ข้ามไปคนถัดไป
-# งบ token ของตัวคุยทั้งระบบวันนี้หมด (#239) → หยุด คนที่เหลือไม่ได้ข้อความ
+# ทักทีละคนที่ broadcast.recipients เลือก · ทุกคนได้ข้อความเดียวกันที่ตัวคุยแต่งครั้งเดียวต่อวัน
+# แต่งในใบของคนแรก (ai_calls ต้องมีใบ) แล้วจดไว้ที่แถวของวันนั้น · แอปดับแล้วทักต่อใช้ข้อความเดิม
+# แต่งหรือส่งให้คนไหนไม่ผ่านก็ข้ามไปคนถัดไป · ยังไม่มีข้อความ คนถัดไปให้ตัวคุยแต่งใหม่
+# ยังต้องแต่งแต่งบ token ของตัวคุยทั้งระบบวันนี้หมด (#239) → ไม่ทักใคร
 async def greet_everyone(today: Broadcast) -> None:
+    greeting = today.greeting
+    if greeting is None and await quota.is_over_system_daily_limit():
+        logger.warning("งบ token ทั้งระบบของวันนี้หมด ไม่ทัก")
+        return
     for recipient in await broadcast.recipients(today):
-        if await quota.is_over_system_daily_limit():
-            logger.warning("งบ token ทั้งระบบของวันนี้หมด หยุดทัก")
-            return
         opened = await broadcast.open_session_for(recipient, today)
         if opened is None:
             continue
         try:
-            await greet(recipient, opened, today)
+            if greeting is None:
+                greeting = await write_greeting(opened, today)
+            await greet(recipient, opened, today, greeting)
         except Exception:
             logger.exception("ทักใบ %s ไม่ผ่าน", opened.session_id)
 
 
-# ตัวคุยแต่งข้อความทักเองทุกครั้ง (ห้ามข้อความสำเร็จรูป) โดยรู้เหตุที่ทักจากบรรทัด [ระบบ: ...]
-# ส่งแล้วบันทึกแบบเดียวกับรอบคุยปกติ ผู้แจ้งตอบกลับมาในใบนี้แล้วตัวคุยเห็นว่าตัวเองทักอะไรไป
-async def greet(recipient: User, opened: Session, today: Broadcast) -> None:
+# ตัวคุยแต่งข้อความทักเอง (ห้ามข้อความสำเร็จรูป) โดยรู้เหตุที่ทักจากบรรทัด [ระบบ: ...] แล้วจดไว้ที่แถวของวันนั้น
+async def write_greeting(opened: Session, today: Broadcast) -> ChatAnswer:
     config = await prompt.active_config()
-    note = prompt.broadcast_note(today.reason)
-    messages = await prompt.build_chat_context(config, [], [note])
+    messages = await prompt.build_chat_context(config, [], [prompt.broadcast_note(today.reason)])
     async with asyncio.timeout(AI_TIMEOUT_SECONDS):
-        answer = await communicator.chat(opened.session_id, config, messages)
-    await line.push(recipient, line.text_messages(answer.texts, answer.buttons))
+        greeting = await communicator.chat(opened.session_id, config, messages)
+    await broadcast.save_greeting(today, greeting)
+    return greeting
+
+
+# ส่งแล้วบันทึกแบบเดียวกับรอบคุยปกติ ผู้แจ้งตอบกลับมาในใบนี้แล้วตัวคุยเห็นว่าตัวเองทักอะไรไป
+async def greet(recipient: User, opened: Session, today: Broadcast, greeting: ChatAnswer) -> None:
+    await line.push(recipient, line.text_messages(greeting.texts, greeting.buttons))
     # ไม่มีข้อความของผู้แจ้งใน buffer · ประวัติของใบ = บรรทัดเหตุที่ทัก + ข้อความที่ทักไป
-    await session.finish(opened.session_id, [], [note], answer.texts)
+    await session.finish(opened.session_id, [], [prompt.broadcast_note(today.reason)], greeting.texts)

@@ -11,6 +11,7 @@ from app.core.config import (
     BROADCAST_SEND_AT,
     BROADCAST_SEND_UNTIL,
 )
+from app.models.answer import ChatAnswer
 from app.models.broadcast import Broadcast
 from app.models.session import Session
 from app.models.user import User
@@ -37,6 +38,11 @@ def reason_for(rain: list[str], hot: list[str]) -> str | None:
     if hot:
         parts.append(f"อากาศอาจร้อนเกิน {weather.HEAT_CELSIUS:g} องศาช่วง {hot[0]} ถึง {hot[-1]} น.")
     return "พยากรณ์อากาศบอกว่าวันนี้" + " และ".join(parts) if parts else None
+
+
+# จดข้อความทักที่ตัวคุยแต่งแล้ว · คนถัดไปและการทักต่อหลังแอปดับใช้ข้อความนี้
+async def save_greeting(broadcast: Broadcast, greeting: ChatAnswer) -> None:
+    await database.save_broadcast_greeting(broadcast.broadcast_id, greeting)
 
 
 async def mark_sent(broadcast: Broadcast) -> None:

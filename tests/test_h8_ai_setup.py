@@ -177,7 +177,7 @@ def test_default_prompts_explain_system_notes():
 
     assert "[ระบบ:" in default_config.CHAT_PROMPT
     assert "[ระบบ:" in default_config.ANALYSER_PROMPT
-    assert "สติกเกอร์" in default_config.CHAT_PROMPT
+    assert "sticker" in default_config.CHAT_PROMPT
 
 
 # --- H10 ตัวคุยเลือกปุ่มใต้ข้อความ — S3 S4 · spec ใน #226 · แบบ docs/designs/09-modules/h10-quick-reply.puml ---
@@ -211,7 +211,7 @@ def test_default_chat_prompt_explains_answer_buttons():
     from app.core import default_config
 
     assert "message" in default_config.CHAT_PROMPT
-    assert "ข้าม" in default_config.CHAT_PROMPT.split("# ปุ่มใต้ข้อความ")[1].split("# ห้าม")[0]
+    assert "ข้าม" in default_config.CHAT_PROMPT.split("# Buttons under messages")[1].split("# Never")[0]
 
 
 # --- #242 เลือกบน DB ได้ว่าจะใช้ ai_configs แถวไหน — spec ใน #242 · แบบ docs/designs/09-modules/242-select-ai-config.puml ---

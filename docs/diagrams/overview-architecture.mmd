@@ -76,7 +76,7 @@ flowchart LR
     reporter --- |"chats, sends photos, pins, stickers<br/>taps PDPA accept"| line
     designteam --- |"reads reports, photos, transcripts"| dashboard
     line --- |"HTTPS · ngrok on dev<br/>to app: webhook new message, follow, postback<br/>from app: reply, push, show loading,<br/>download photo"| app_container
-    dashboard --- |"HTTPS · Bearer DASHBOARD_API_KEY<br/>to app: GET reports, attachments, transcripts<br/>from app: reports JSON, photo files"| app_container
+    dashboard --- |"HTTPS · Bearer DASHBOARD_API_KEY<br/>to app: GET reports, attachments, transcripts<br/>from app: reports JSON, transcripts JSON, photo files"| app_container
     app_container --- |"HTTPS<br/>to Gemini: chat history + new messages,<br/>closed session transcript, broadcast reason<br/>from Gemini: chat reply, reports JSON,<br/>first message"| gemini
 
     %% «use» dependencies inside the host

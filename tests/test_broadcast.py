@@ -1,4 +1,5 @@
-# ทักไปก่อนเมื่อพยากรณ์บอกว่าฝนจะตก — อ่านพยากรณ์หลังตี 1 · ทักตั้งแต่ 8 โมง · เลย 2 ทุ่มไม่ทัก
+# ทักไปก่อนทุกวัน — อ่านพยากรณ์หลังตี 1 · ทักตั้งแต่ 8 โมง · เลย 2 ทุ่มไม่ทัก
+# ฝนจะตก → บอกเรื่องฝน · ไม่ตก หรือ 8 โมงแล้วยังอ่านพยากรณ์ไม่ได้ → ทักถามไถ่
 # สุ่มวันละไม่เกิน BROADCAST_DAILY_LIMIT คน · แบบ docs/diagrams/broadcast-flow.mmd
 # พยากรณ์ใช้ไฟล์ปลอม app/clients/mock_forecast.json (ฝนตกช่วง 14:00–15:00) · AI กับ LINE เป็นของปลอม
 
@@ -17,6 +18,7 @@ DAY = datetime(2026, 10, 23, tzinfo=THAI_TIME)
 GREETING = ["สวัสดีค่ะ เมืองจากทีม UCR นะคะ วันนี้บ่าย ๆ อาจมีฝน", "ฝนตกทีไรแถวบ้านเป็นยังไงบ้างคะ ไม่สะดวกก็ไม่ต้องตอบนะคะ"]
 REPLY = "ขอบคุณที่เล่าค่ะ น้ำท่วมสูงแค่ไหนคะ"
 REASON = "พยากรณ์อากาศบอกว่าวันนี้อาจมีฝนแถวบ้าน"
+FRIENDLY = "ทักมาถามไถ่ ขอให้วันนี้เป็นวันที่ดี ถ้าเจอปัญหาตรงไหนแถวบ้านเล่าให้เมืองฟังได้"
 
 
 def at(hour: int, minute: int = 0) -> datetime:
@@ -250,8 +252,8 @@ async def test_skips_whoever_is_talking(client, db, ai_chats, pushes):
     assert await broadcast_session(db, busy) is None
 
 
-# ไม่มีฝน → ไม่ทักทั้งวัน
-async def test_no_rain_no_greeting(client, db, ai_chats, pushes, monkeypatch):
+# ไม่มีฝน → ทักถามไถ่ · ตัวคุยแต่งจากเหตุที่ทักแบบถามไถ่
+async def test_no_rain_sends_a_friendly_hello(client, db, ai_chats, pushes, monkeypatch):
     from app.clients import weather
 
     real_fetch = weather.fetch_daily
@@ -270,9 +272,9 @@ async def test_no_rain_no_greeting(client, db, ai_chats, pushes, monkeypatch):
     await tick(at(8, 0))
 
     row = await broadcast_row(db)
-    assert (row["status"], row["reason"]) == ("skipped", None)
-    assert pushes == []
-    assert ai_chats == []
+    assert (row["status"], row["reason"]) == ("sent", FRIENDLY)
+    assert pushes == [("U_a", GREETING)]
+    assert FRIENDLY in ai_chats[0][-1][1]
 
 
 # แอปดับไปทั้งวัน เปิดอีกทีตอน 2 ทุ่ม → ไม่ทักแล้ว ไม่ส่งข้อความตอนดึก
@@ -391,22 +393,22 @@ def forecast(monkeypatch):
     return given
 
 
-async def test_rain_at_night_is_not_a_reason(client, db, forecast):
+async def test_rain_at_night_gets_the_friendly_reason(client, db, forecast):
     forecast[0] = forecast_of(community(hour("02:00", "มีฝน", 1.2), hour("21:00", "ฝนฟ้าคะนอง", 3.0)))
 
     await tick(at(1, 0))
 
     row = await broadcast_row(db)
-    assert (row["status"], row["reason"]) == ("skipped", None)
+    assert (row["status"], row["reason"]) == ("scheduled", FRIENDLY)
 
 
-async def test_heat_without_rain_is_not_a_reason(client, db, forecast):
+async def test_heat_without_rain_gets_the_friendly_reason(client, db, forecast):
     forecast[0] = forecast_of(community(hour("12:00", temperature=36.2), hour("13:00", temperature=37.0)))
 
     await tick(at(1, 0))
 
     row = await broadcast_row(db)
-    assert (row["status"], row["reason"]) == ("skipped", None)
+    assert (row["status"], row["reason"]) == ("scheduled", FRIENDLY)
 
 
 async def test_community_without_forecast_is_skipped(client, db, forecast):
@@ -451,6 +453,24 @@ async def test_file_not_uploaded_yet_tries_again_later(client, db, monkeypatch):
         await tick(at(1, 0))
 
     assert await broadcast_row(db) is None
+
+
+# 8 โมงแล้วไฟล์ยังไม่ขึ้น → ไม่รอพยากรณ์ ทักถามไถ่
+async def test_no_file_by_eight_sends_a_friendly_hello(client, db, ai_chats, pushes, monkeypatch):
+    from app.clients import weather
+
+    async def not_uploaded(self, url):
+        return httpx.Response(403, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(weather, "FORECAST_URL", "https://forecast.test/forecast/{date}.json")
+    monkeypatch.setattr(httpx.AsyncClient, "get", not_uploaded)
+    await add_user(db, "U_a")
+
+    await tick(at(8, 0))
+
+    row = await broadcast_row(db)
+    assert (row["status"], row["reason"]) == ("sent", FRIENDLY)
+    assert pushes == [("U_a", GREETING)]
 
 
 # --- ใครได้ข้อความ: สุ่มวันละไม่เกิน BROADCAST_DAILY_LIMIT คน · ไม่เกินข้อความที่เหลือของเดือนใน LINE ---

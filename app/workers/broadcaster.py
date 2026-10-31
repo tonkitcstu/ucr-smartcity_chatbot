@@ -18,6 +18,8 @@ from app.models.user import User
 from app.services import broadcast, communicator, prompt, quota, session
 
 THAI_TIME = timezone(timedelta(hours=7))
+# วันที่ไม่ทักทั้งวัน · ทักวันละ 10 คน 30 วันเท่ากับ 300 ข้อความ = ข้อความฟรีต่อเดือนของ LINE
+NO_MESSAGE_DAY = 31
 # รอ AI แต่งข้อความทักได้ไม่เกินนี้ · ไม่มี reply token ให้ต้องรีบ แต่ไม่ให้คนหนึ่งค้างจนคนที่เหลือไม่ได้ทัก
 AI_TIMEOUT_SECONDS = 60
 
@@ -37,7 +39,7 @@ async def run() -> None:
 
 # ดูหนึ่งรอบว่าตอนนี้ต้องทำอะไร · now เป็นเวลาไทย (test ส่งเวลาที่อยากลองเข้ามาเองได้)
 async def tick(now: datetime) -> None:
-    if now.time() < BROADCAST_FETCH_AT:
+    if now.time() < BROADCAST_FETCH_AT or now.day == NO_MESSAGE_DAY:
         return
     today = await broadcast.find_for(now.date())
     if today is None:

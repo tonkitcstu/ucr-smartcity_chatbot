@@ -382,13 +382,13 @@ def to_broadcast(row) -> Broadcast:
     return Broadcast(**{**row, "greeting": ChatAnswer.model_validate_json(greeting) if greeting else None})
 
 
-# จดพยากรณ์ของวันนั้น · มีเหตุให้ทัก → scheduled · ไม่มี → skipped
+# จดวันนั้นว่ารอทัก (scheduled) พร้อมเหตุที่ทัก
 # วันนั้นมีแถวแล้ว (อีก process จดไปก่อน) → คืนแถวเดิม ไม่เขียนทับ
-async def insert_broadcast(day: date, reason: str | None) -> Broadcast:
+async def insert_broadcast(day: date, reason: str) -> Broadcast:
     row = await pool.fetchrow(
         """
         INSERT INTO broadcasts (forecast_date, reason, status)
-        VALUES ($1, $2, CASE WHEN $2::text IS NULL THEN 'skipped' ELSE 'scheduled' END)
+        VALUES ($1, $2, 'scheduled')
         ON CONFLICT (forecast_date) DO UPDATE SET forecast_date = EXCLUDED.forecast_date
         RETURNING broadcast_id, forecast_date, reason, status, greeting
         """,

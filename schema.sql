@@ -19,13 +19,13 @@ CREATE TABLE broadcasts (
     broadcast_id  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     -- วันตามเวลาไทยที่พยากรณ์พูดถึง
     forecast_date date NOT NULL UNIQUE,
-    -- เหตุที่ทัก ส่งให้ตัวคุยใช้แต่งข้อความ เช่น ฝนอาจตกแถวบ้าน · null = วันนี้ไม่มีเหตุให้ทัก
-    reason        text,
+    -- เหตุที่ทัก ส่งให้ตัวคุยใช้แต่งข้อความ เช่น ฝนอาจตกแถวบ้าน · วันที่ไม่มีฝนเป็นการทักถามไถ่
+    reason        text NOT NULL,
     -- ข้อความทักที่ตัวคุยแต่งครั้งเดียวของวันนั้น {"texts": [...], "buttons": [...]} ทุกคนได้ข้อความนี้ · null = ยังไม่ได้แต่ง
     greeting      jsonb,
-    -- skipped = ไม่มีเหตุให้ทัก · scheduled = รอทัก หรือทักยังไม่ครบทุกคน · sent = ทักครบแล้ว
+    -- scheduled = รอทัก หรือทักยังไม่ครบทุกคน · sent = ทักครบแล้ว
     -- expired = เลยเวลาที่ทักได้ของวันนั้นแล้ว เช่น แอปดับไปทั้งวัน
-    status        text NOT NULL CHECK (status IN ('skipped', 'scheduled', 'sent', 'expired')),
+    status        text NOT NULL CHECK (status IN ('scheduled', 'sent', 'expired')),
     sent_at       timestamptz,
     created_at    timestamptz NOT NULL DEFAULT now()
 );

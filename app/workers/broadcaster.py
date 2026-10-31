@@ -1,5 +1,6 @@
 # สมองเบื้องหลังของการทักไปก่อน
-# ทุกวันหลังตี 1 อ่านพยากรณ์อากาศ · วันไหนฝนจะตก พอถึง 8 โมงเช้าให้ตัวคุยแต่งข้อความแล้วทักผู้แจ้งทีละคน
+# ทุกวันหลังตี 1 อ่านพยากรณ์อากาศ · พอถึง 8 โมงเช้าให้ตัวคุยแต่งข้อความแล้วทักผู้แจ้งทีละคน
+# วันไหนฝนจะตกบอกเรื่องฝน · ไม่ตก หรือถึง 8 โมงแล้วยังอ่านพยากรณ์ไม่ได้ → ทักถามไถ่
 # สุ่มวันละไม่เกิน BROADCAST_DAILY_LIMIT คน · แบบ docs/diagrams/broadcast-flow.mmd
 # ตื่นมาดูเวลาทุก BROADCAST_CHECK_SECONDS แบบเดียวกับตัวกวาดใบ · วันนี้ทำถึงไหนแล้วดูจากแถวของวันนี้ใน broadcasts
 #   แอปดับแล้วเปิดใหม่จึงทำต่อจากที่ค้างได้ และไม่ทักซ้ำ
@@ -40,7 +41,7 @@ async def tick(now: datetime) -> None:
         return
     today = await broadcast.find_for(now.date())
     if today is None:
-        today = await broadcast.check_forecast(now.date())
+        today = await read_forecast(now)
     if today.status != "scheduled" or now.time() < BROADCAST_SEND_AT:
         return
     if now.time() >= BROADCAST_SEND_UNTIL:
@@ -49,6 +50,17 @@ async def tick(now: datetime) -> None:
     # ยังเป็น scheduled อยู่ = ยังไม่ได้ทัก หรือทักค้างไว้เพราะแอปดับกลางทาง · ไล่ทักใหม่ คนที่ได้ไปแล้วถูกข้าม
     await greet_everyone(today)
     await broadcast.mark_sent(today)
+
+
+# อ่านพยากรณ์ไม่ได้ (เช่น ไฟล์ยังไม่ขึ้น) ก่อนเวลาทัก → พังให้รอบหน้าลองใหม่ · ถึงเวลาทักแล้ว → ไม่รอพยากรณ์ ทักถามไถ่
+async def read_forecast(now: datetime) -> Broadcast:
+    try:
+        return await broadcast.check_forecast(now.date())
+    except Exception:
+        if now.time() < BROADCAST_SEND_AT:
+            raise
+        logger.exception("ถึงเวลาทักแล้วยังอ่านพยากรณ์ไม่ได้ ทักถามไถ่แทน")
+        return await broadcast.schedule_without_forecast(now.date())
 
 
 # ทักทีละคนที่ broadcast.recipients เลือก · ทุกคนได้ข้อความเดียวกันที่ตัวคุยแต่งครั้งเดียวต่อวัน

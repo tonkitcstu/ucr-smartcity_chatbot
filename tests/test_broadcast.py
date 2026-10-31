@@ -115,6 +115,19 @@ async def test_nothing_before_one_am(client, db, ai_chats, pushes):
     assert pushes == []
 
 
+# วันที่ 31 ไม่ทักทั้งวัน · ไม่อ่านพยากรณ์ ไม่จดแถว
+async def test_no_message_on_the_31st(client, db, ai_chats, pushes):
+    await add_user(db, "U_a")
+    last_day = datetime(2026, 10, 31, tzinfo=THAI_TIME)
+
+    await tick(last_day.replace(hour=1))
+    await tick(last_day.replace(hour=8))
+
+    assert await db.fetchval("SELECT count(*) FROM broadcasts") == 0
+    assert pushes == []
+    assert ai_chats == []
+
+
 # หลังตี 1 อ่านพยากรณ์ ฝนจะตก → รอทัก · ยังไม่ถึง 8 โมงยังไม่ทัก
 async def test_rain_is_scheduled_after_one_am(client, db, ai_chats, pushes):
     await add_user(db, "U_a")

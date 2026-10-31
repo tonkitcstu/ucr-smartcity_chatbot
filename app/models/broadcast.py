@@ -11,8 +11,8 @@ from app.models.answer import ChatAnswer
 class Broadcast(BaseModel):
     broadcast_id: UUID
     forecast_date: date
-    # เหตุที่ทัก · None = วันนี้ไม่มีเหตุให้ทัก
-    reason: str | None
-    status: Literal["skipped", "scheduled", "sent", "expired"]
+    # เหตุที่ทัก ส่งให้ตัวคุยใช้แต่งข้อความ
+    reason: str
+    status: Literal["scheduled", "sent", "expired"]
     # ข้อความทักของวันนั้น ทุกคนได้ข้อความเดียวกัน · None = ยังไม่ได้แต่ง
     greeting: ChatAnswer | None = None

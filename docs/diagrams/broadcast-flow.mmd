@@ -29,6 +29,7 @@ flowchart TB
 
     subgraph read["1 · read the forecast · from BROADCAST_FETCH_AT 01:00"]
         direction TB
+        monthend{"31st of the month?"}
         fetch["download today's file<br/>FORECAST_URL · empty = mock_forecast.json"]
         ready{"file read?<br/>not uploaded yet = no"}
         reason{"rain in any community<br/>from BROADCAST_SEND_AT to BROADCAST_SEND_UNTIL?<br/>communities with error are skipped"}
@@ -65,17 +66,20 @@ flowchart TB
     retry(["try again next check"])
     expired(["today = expired · no message"])
     stopped(["stop · nobody gets a message today"])
+    resting(["no message on the 31st<br/>10 a day × 30 days = LINE's 300 a month"])
 
     unfollow@{ shape: rect, label: "LINE unfollow · reporter blocked the bot<br/>user marked blocked" }
     follow@{ shape: rect, label: "LINE follow · reporter added or unblocked the bot<br/>user marked following again" }
 
     class fetch,scheduled,friendly,howmany,who,order,open,write,push,save,sent,reply,silent step
-    class ready,early,reason,late,tokens,written check
+    class monthend,ready,early,reason,late,tokens,written check
     class lambda external
-    class retry,expired,stopped stop
+    class retry,expired,stopped,resting stop
     class unfollow,follow event
     class read,pick,send,after env
 
+    monthend -- yes --> resting
+    monthend -- no --> fetch
     lambda -. "file of the day" .-> fetch
     fetch --> ready
     ready -- no --> early

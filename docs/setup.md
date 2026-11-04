@@ -16,6 +16,8 @@ cp .env.example .env
 
 `.env` is not in git. Put real values only in `.env`, never in `.env.example`.
 
+`.env.example` has only the keys you usually set. Add any other key from this table to `.env` to change its default.
+
 | Key | Needed | Default | What it does |
 |---|---|---|---|
 | `LINE_CHANNEL_SECRET` | yes | none | checks LINE's signature on the webhook |

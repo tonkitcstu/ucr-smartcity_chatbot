@@ -1,0 +1,84 @@
+---
+title: Push — Bot Messages Up to 10 People First Every Day
+config:
+  theme: base
+  themeVariables:
+    fontFamily: "Inter, Helvetica, Arial, sans-serif"
+    fontSize: 14px
+---
+
+sequenceDiagram
+    autonumber
+    participant broadcaster as App: broadcaster<br/>workers/broadcaster.py
+    participant forecast as Forecast file<br/>FORECAST_URL or mock_forecast.json
+    participant postgres as PostgreSQL
+    participant gemini as Gemini
+    participant redis as Redis
+    participant line as LINE
+    actor reporter as Reporter
+
+    %% on only when BROADCAST_ENABLED · all times are Thai time · same flow as a flowchart: broadcast-flow.mmd
+
+    loop every BROADCAST_CHECK_SECONDS 60
+        Note over broadcaster: before BROADCAST_FETCH_AT 01:00, or the 31st: nothing today
+
+        %% 1. Read the forecast once a day
+        rect rgba(120, 160, 255, 0.12)
+            broadcaster ->> postgres: find today's broadcasts row
+            opt no row yet
+                broadcaster ->> forecast: download today's file
+                alt file read
+                    forecast -->> broadcaster: rain hours per community
+                    broadcaster ->> postgres: today = scheduled<br/>reason = rain, if rain from 08:00 to 20:00<br/>else friendly hello
+                else not read, before BROADCAST_SEND_AT 08:00
+                    Note over broadcaster: try again next check
+                else not read, from 08:00
+                    broadcaster ->> postgres: today = scheduled, reason = friendly hello
+                end
+            end
+            Note over broadcaster: today sent or expired, or before 08:00: wait for the next check
+            opt from BROADCAST_SEND_UNTIL 20:00, still scheduled
+                broadcaster ->> postgres: today = expired, no message
+            end
+        end
+
+        %% 2. Pick people · from 08:00 to 20:00
+        rect rgba(120, 220, 160, 0.12)
+            break no message written yet and system tokens used up today
+                Note over broadcaster: nobody gets a message this check
+            end
+            broadcaster ->> postgres: count sessions already opened for today
+            broadcaster ->> line: read messages left this month
+            line -->> broadcaster: free plan has 300 a month
+            broadcaster ->> postgres: pick at random<br/>up to BROADCAST_DAILY_LIMIT 10 minus already opened<br/>no more than messages left<br/>still follows the bot, no open session, no session for today yet
+        end
+
+        %% 3. Message each picked person
+        rect rgba(255, 190, 110, 0.12)
+            loop each picked person
+                broadcaster ->> postgres: open a broadcast session<br/>already has an open session or today's: skip
+                opt today's message not written yet
+                    broadcaster ->> postgres: read active ai_config, chat prompt and model
+                    broadcaster ->> gemini: chat prompt + reason line<br/>"system: bot messages first, reporter has not typed, reason: ..."
+                    gemini -->> broadcaster: texts + buttons JSON
+                    broadcaster ->> postgres: save ai_call<br/>save the message on today's row
+                end
+                broadcaster ->> line: push the same message to this person<br/>counts 1 of the monthly limit
+                line ->> reporter: bot messages + buttons
+                broadcaster ->> postgres: save bot messages
+                broadcaster ->> redis: history = reason line + bot messages
+                Note over broadcaster,gemini: Gemini or push fails: sequence-fallback.mmd
+            end
+            broadcaster ->> postgres: today = sent
+        end
+    end
+
+    %% 4. After the message
+    rect rgba(148, 163, 184, 0.15)
+        alt reporter replies within BROADCAST_WAIT_HOURS 24
+            reporter ->> line: reply
+            Note over line,reporter: same session, Gemini sees the reason line and its message<br/>then normal chat: sequence-normal.mmd
+        else no reply in 24 hours
+            Note over postgres,redis: sweeper closes the session, no analysis: sequence-leaving.mmd
+        end
+    end

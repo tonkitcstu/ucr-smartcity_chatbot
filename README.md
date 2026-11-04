@@ -1,18 +1,16 @@
-# UCR Chatbot
+# UCR Chatbot 2.0
 
 A LINE bot for UCR / TONKIT Lab. People in a community tell it about their environment and the city around their home. Gemini chats with them, then turns each chat into reports with a location. The city design team reads the reports and uses them to choose what to improve first.
 
-Setup and run: [`docs/setup.md`](docs/setup.md) · Code rules: [`CLAUDE.md`](CLAUDE.md)
-
 ## What it does
 
-- **Chat** — a reporter sends text, photos, location pins or stickers. The bot waits until they stop typing for 3 seconds, then Gemini answers with up to 5 messages and buttons: location, camera, camera roll, or answer words.
-- **Reports** — a chat that is quiet for 2 hours closes. Gemini reads the whole chat and writes 0 to n reports. Each report has a description, tags, severity, who is affected, time of day, place, location and photos.
-- **Dashboard API** — the design team reads reports, photos and chats with an API key.
-- **PDPA** — a new reporter gets the PDPA card first. Nothing is saved until they tap accept.
-- **Limits** — tokens per reporter per day, tokens for everyone per day, and messages waiting in one chat. A reporter who hits a limit gets a fixed text instead of Gemini.
-- **Fallback** — Gemini fails or takes over 50 seconds: the reporter gets a fixed text, and their messages stay for the next answer.
-- **Broadcast** — off by default. Every day the bot messages up to 10 random reporters first. Rain in the forecast from 08:00 to 20:00 gets a rain message, other days get a friendly hello. No message on the 31st.
+- **Chat**: a reporter sends text, photos, location pins or stickers. The bot waits until they stop typing for 3 seconds, then Gemini answers with up to 5 messages and buttons: location, camera, camera roll, or answer words.
+- **Reports**: a chat that is quiet for 2 hours closes. Gemini reads the whole chat and writes 0 to n reports. Each report has a description, tags, severity, who is affected, time of day, place, location and photos.
+- **Dashboard API**: the design team reads reports, photos and chats with an API key.
+- **PDPA**: a new reporter gets the PDPA card first. Nothing is saved until they tap accept.
+- **Limits**: tokens per reporter per day, tokens for everyone per day, and messages waiting in one chat. A reporter who hits a limit gets a fixed text instead of Gemini.
+- **Fallback**: Gemini fails or takes over 50 seconds. The reporter gets a fixed text, and their messages stay for the next answer.
+- **Broadcast**: off by default. Every day the bot messages up to 10 random reporters first. Rain in the forecast from 08:00 to 20:00 gets a rain message, other days get a friendly hello. No message on the 31st.
 
 Gemini writes every message the bot sends. Fixed texts in code: the fallback text, the limit texts, and the PDPA card with its welcome text.
 
@@ -28,6 +26,40 @@ Gemini writes every message the bot sends. Fixed texts in code: the fallback tex
 | `redis` container | Redis 8: messages waiting for an answer, chat state, chat history, job queue |
 | Gemini | `gemini-3.5-flash-lite` through its OpenAI-compatible API |
 | LINE Messaging API | webhook in, reply and push out |
+
+## Setup
+
+Run the bot with Docker. Full steps: [`docs/setup.md`](docs/setup.md)
+
+```bash
+cp .env.example .env
+```
+
+```bash
+docker compose up -d --build
+```
+
+```bash
+curl -i http://localhost:8000/health
+```
+
+## Develop
+
+Work on the code with uv, PostgreSQL and Redis on your machine. Full steps: [`docs/develop.md`](docs/develop.md)
+
+```bash
+uv sync
+```
+
+```bash
+uv run uvicorn app.main:app --reload
+```
+
+```bash
+uv run pytest
+```
+
+Code rules: [`CLAUDE.md`](CLAUDE.md)
 
 ## Diagrams
 
@@ -61,26 +93,10 @@ API key: header `Authorization: Bearer <key>`, the same value as `DASHBOARD_API_
 
 Full routes for Postman: [`docs/api.md`](docs/api.md) · JSON and curl for each route: [`docs/designs/09-modules/h7-dashboard-api.md`](docs/designs/09-modules/h7-dashboard-api.md)
 
-## Code
-
-```
-app/
-  main.py        starts the app and the 3 background loops
-  api/           routes
-  controllers/   LINE webhook, dashboard, health
-  workers/       worker, sweeper, broadcaster
-  services/      one file per thing: session, state, quota, pdpa, broadcast, prompt, report ...
-  clients/       outside systems: database, redis, line, ai, weather
-  models/        data shapes
-  core/          config.py reads .env · default_config.py has the first model and prompts
-schema.sql       all tables
-tests/           pytest
-docker/          Dockerfiles and compose files for each container
-```
-
 ## Docs
 
-- [`docs/setup.md`](docs/setup.md) — install, run, connect LINE, turn on broadcast, test
-- [`docs/diagrams/`](docs/diagrams/) — how it works
-- [`docs/api.md`](docs/api.md) — all routes
-- [`docs/requirements/`](docs/requirements/) — needs, constraints, user stories
+- [`docs/setup.md`](docs/setup.md): run the bot with Docker, connect LINE, turn on broadcast, AI settings
+- [`docs/develop.md`](docs/develop.md): run on your machine, tests, dependencies, code layout, workflow
+- [`docs/diagrams/`](docs/diagrams/): how it works
+- [`docs/api.md`](docs/api.md): all routes
+- [`docs/requirements/`](docs/requirements/): needs, constraints, user stories

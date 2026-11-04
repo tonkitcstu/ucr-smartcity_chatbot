@@ -85,7 +85,7 @@ uv export --no-dev --no-hashes --no-emit-project --format requirements-txt -o re
 
 ## 6. Code
 
-Code rules: [`CLAUDE.md`](../CLAUDE.md). Comments in the code are in Thai.
+Project rules: [`CLAUDE.md`](../CLAUDE.md). Comments in the code are in Thai.
 
 ```
 app/

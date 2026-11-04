@@ -59,7 +59,7 @@ uv run uvicorn app.main:app --reload
 uv run pytest
 ```
 
-Code rules: [`CLAUDE.md`](CLAUDE.md)
+Project rules: [`CLAUDE.md`](CLAUDE.md)
 
 ## Diagrams
 

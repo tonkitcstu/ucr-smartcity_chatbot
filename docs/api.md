@@ -1,41 +1,41 @@
-# API ทั้งหมด — 6 เส้น
+# API UCR Chatbot
 
-ตัวแปรใน Postman: `{{base}}` = ที่อยู่ของเครื่องที่รันแอป (เครื่องตัวเอง `http://localhost:8000`) · `{{key}}` = ค่า `DASHBOARD_API_KEY` ใน `.env`
-หน้าตา JSON ของแต่ละเส้นและ curl: `docs/designs/09-modules/h7-dashboard-api.md`
+Postman variables: `{{base}}` is the address of the machine that runs the app (your own machine: `http://localhost:8000`). `{{key}}` is `DASHBOARD_API_KEY` in `.env`.
 
-| # | เส้น | ทำอะไร | ใครเรียกได้ |
+| # | Route | What it does | Who can call it |
 |---|---|---|---|
-| 1 | `POST {{base}}/webhook/line` | รับข้อความและ event จาก LINE | LINE เท่านั้น (ตรวจลายเซ็นของ LINE) |
-| 2 | `GET {{base}}/health` | PostgreSQL · Redis · worker · sweeper ยังทำงานไหม | ทุกคน |
-| 3 | `GET {{base}}/api/dashboard/reports` | รายงาน ใหม่ไปเก่า กรองได้ | กุญแจ API |
-| 4 | `GET {{base}}/api/dashboard/reports/:report_id` | รายงานใบเดียว | กุญแจ API |
-| 5 | `GET {{base}}/api/dashboard/attachments/:attachment_id` | ไฟล์รูป | กุญแจ API |
-| 6 | `GET {{base}}/api/dashboard/transcripts/:session_id` | บทสนทนาทั้งใบ | กุญแจ API |
+| 1 | `POST {{base}}/webhook/line` | gets messages and events from LINE | LINE only, checked by LINE's signature |
+| 2 | `GET {{base}}/health` | PostgreSQL, Redis, worker and sweeper are up | anyone |
+| 3 | `GET {{base}}/api/dashboard/reports` | reports, newest first, with filters | API key |
+| 4 | `GET {{base}}/api/dashboard/reports/:report_id` | one report | API key |
+| 5 | `GET {{base}}/api/dashboard/attachments/:attachment_id` | one photo file | API key |
+| 6 | `GET {{base}}/api/dashboard/transcripts/:session_id` | the whole chat of one session | API key |
 
-## กุญแจ API (เส้น 3–6)
+## API key (routes 3 to 6)
 
-header `Authorization: Bearer <กุญแจ>`
-Postman: แท็บ Authorization ของ collection → Auth Type `Bearer Token` → Token `{{key}}` · คำขอข้างในเลือก `Inherit auth from parent`
+Header: `Authorization: Bearer <key>`
 
-| ได้ | เมื่อ |
+Postman: in the collection's Authorization tab, choose Auth Type `Bearer Token` and set Token to `{{key}}`. Each request inside uses `Inherit auth from parent`.
+
+| Response | When |
 |---|---|
-| 401 `{"detail": "Invalid API key"}` | ไม่แนบกุญแจ / กุญแจผิด / ไม่มีคำว่า `Bearer` นำหน้า |
-| 503 `{"detail": "DASHBOARD_API_KEY is not set"}` | เครื่องนั้นยังไม่ได้ตั้ง `DASHBOARD_API_KEY` |
+| 401 `{"detail": "Invalid API key"}` | no key, wrong key, or no `Bearer` before the key |
+| 503 `{"detail": "DASHBOARD_API_KEY is not set"}` | the machine has no `DASHBOARD_API_KEY` |
 
-## 3. รายงาน — ตัวกรอง
+## 3. Reports: filters
 
-ทุกตัวไม่ใส่ก็ได้ · ใส่หลายตัว รายงานต้องตรงทุกตัว · วันนับจากเวลาที่รายงานถูกสร้าง (`created_at`) ตามเวลาไทย
+Every filter is optional. With more than one filter, a report must match all of them. Dates use the time the report was made (`created_at`), Thai time.
 
-| ตัวกรอง | ค่า | ความหมาย |
+| Filter | Value | Meaning |
 |---|---|---|
-| `date` | `YYYY-MM-DD` | สร้างในวันนั้น |
-| `start_date` | `YYYY-MM-DD` | สร้างตั้งแต่วันนั้น นับวันนั้นด้วย |
-| `end_date` | `YYYY-MM-DD` | สร้างจนถึงวันนั้น นับวันนั้นด้วย |
-| `tag` | ข้อความ | มีป้ายนี้ ตรงทั้งคำ |
-| `severity` | `low` · `medium` · `high` | ความรุนแรงเท่านี้ |
-| `limit` | 1–200 · ค่าตั้งต้น 20 | เอากี่ใบ นับจากใบใหม่สุด |
+| `date` | `YYYY-MM-DD` | made on that day |
+| `start_date` | `YYYY-MM-DD` | made on that day or later |
+| `end_date` | `YYYY-MM-DD` | made on that day or earlier |
+| `tag` | text | has this exact tag |
+| `severity` | `low`, `medium` or `high` | has this severity |
+| `limit` | 1 to 200, default 20 | how many, newest first |
 
-วางใน Postman ได้เลย:
+Paste into Postman:
 
 ```
 {{base}}/api/dashboard/reports
@@ -49,14 +49,14 @@ Postman: แท็บ Authorization ของ collection → Auth Type `Bearer T
 {{base}}/api/dashboard/reports?tag=น้ำท่วม&severity=high&start_date=2026-10-01&end_date=2026-10-31&limit=200
 ```
 
-| ได้ | เมื่อ |
+| Response | When |
 |---|---|
-| 200 รายการรายงาน · ไม่มีที่ตรง = `[]` | ปกติ |
-| 422 | วันไม่ใช่ `YYYY-MM-DD` / `severity` ไม่ใช่สามค่านั้น / `limit` นอก 1–200 |
+| 200, a list of reports, `[]` when nothing matches | normal |
+| 422 | a date is not `YYYY-MM-DD`, `severity` is not one of the 3 values, or `limit` is outside 1 to 200 |
 
-## 4–6. เส้นที่ใส่รหัส
+## 4 to 6. Routes with an ID
 
-`:ชื่อ` ใน Postman คือตัวแปรในที่อยู่ — ใส่ค่าในตาราง Path Variables ของแท็บ Params
+`:name` in Postman is a variable in the address. Fill it in the Path Variables table on the Params tab.
 
 ```
 {{base}}/api/dashboard/reports/:report_id
@@ -64,14 +64,46 @@ Postman: แท็บ Authorization ของ collection → Auth Type `Bearer T
 {{base}}/api/dashboard/transcripts/:session_id
 ```
 
-| รหัส | เอามาจาก |
+| ID | Where to get it |
 |---|---|
-| `report_id` | `report_id` ในรายการรายงาน |
-| `attachment_id` | `attachments[].attachment_id` ในรายงาน หรือ `attachment.attachment_id` ในบทสนทนา |
-| `session_id` | `session_id` ในรายงาน |
+| `report_id` | `report_id` in the report list |
+| `attachment_id` | `attachments[].attachment_id` in a report, or `attachment.attachment_id` in a transcript |
+| `session_id` | `session_id` in a report |
 
-| ได้ | เมื่อ |
+| Response | When |
 |---|---|
-| 200 | เจอ · เส้น attachments ได้ไฟล์รูป `image/jpeg` ไม่ใช่ JSON |
-| 404 `Report not found` · `Attachment not found` · `Transcript not found` | ไม่มีรหัสนี้ (attachments: หรือไฟล์ไม่อยู่บนดิสก์) |
-| 422 | รหัสไม่ใช่ uuid |
+| 200 | found · route 5 gives an `image/jpeg` file, not JSON |
+| 404 `Report not found`, `Attachment not found` or `Transcript not found` | no such ID · route 5 also when the file is not on disk |
+| 422 | the ID is not a UUID |
+
+## Response JSON
+
+One report, from routes 3 and 4:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `report_id` | UUID | this report |
+| `session_id` | UUID | the chat it came from, for route 6 |
+| `user_id` | UUID | the reporter, never their LINE ID |
+| `desc` | text | 2 to 4 sentences: what happened, where, how often, who it affects, in the reporter's words |
+| `tags` | list of text | 1 to 3 short topic words, for example น้ำท่วม (flood), ขยะ (garbage) · used by the `tag` filter |
+| `severity` | `low`, `medium` or `high` | how serious |
+| `affected_groups` | list | who is affected: `elderly`, `children`, `disabled`, `pedestrians`, `drivers`, `workers`, `residents` |
+| `time_periods` | list | when it happens: `morning`, `midday`, `evening`, `night` |
+| `place` | text or `null` | the place in the reporter's words, for example หน้าวัด (in front of the temple) · `null` when they did not say |
+| `lat`, `lng` | number or `null` | from the location pin the reporter sent |
+| `attachments` | list | photos: `attachment_id` and `url` for route 5 |
+| `started_at` | time, Thai time | when the chat started |
+| `created_at` | time, Thai time | when the report was made, after the chat closed |
+
+One message, from route 6, oldest first:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `message_id` | UUID | this message |
+| `role` | `user` or `assistant` | reporter or bot |
+| `type` | `text`, `image`, `location` or `sticker` | kind of message |
+| `content` | text or `null` | text, or LINE's words for a sticker |
+| `lat`, `lng` | number or `null` | for `location` |
+| `status` | `pending`, `answered` or `skipped` | `skipped`: sent while the chat was paused for too many messages, the analyser did not read it |
+| `attachment` | object or `null` | for `image`: `attachment_id` and `url` for route 5 |

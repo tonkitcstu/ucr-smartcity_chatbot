@@ -80,18 +80,7 @@ Mermaid files in [`docs/diagrams/`](docs/diagrams/):
 
 ## API
 
-| Route | What it does | Who can call it |
-|---|---|---|
-| `POST /webhook/line` | gets events from LINE | LINE only, checked by LINE's signature |
-| `GET /health` | PostgreSQL, Redis, worker and sweeper are up | anyone |
-| `GET /api/dashboard/reports` | reports, newest first, filter by `date`, `start_date`, `end_date`, `tag`, `severity`, `limit` | API key |
-| `GET /api/dashboard/reports/{report_id}` | one report | API key |
-| `GET /api/dashboard/attachments/{attachment_id}` | one photo file | API key |
-| `GET /api/dashboard/transcripts/{session_id}` | the whole chat of one session | API key |
-
-API key: header `Authorization: Bearer <key>`, the same value as `DASHBOARD_API_KEY` in `.env`. Wrong or missing key gives 401. `DASHBOARD_API_KEY` not set gives 503.
-
-Full routes for Postman: [`docs/api.md`](docs/api.md)
+6 routes: the LINE webhook, a health check, and 4 dashboard routes for reports, photos and chats. Routes, API key, filters and response JSON: [`docs/api.md`](docs/api.md)
 
 ## Docs
 

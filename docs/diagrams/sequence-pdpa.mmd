@@ -1,0 +1,53 @@
+---
+title: PDPA — Reporter Accepts Before Anything Is Saved
+config:
+  theme: base
+  themeVariables:
+    fontFamily: "Inter, Helvetica, Arial, sans-serif"
+    fontSize: 14px
+---
+
+sequenceDiagram
+    autonumber
+    actor reporter as Reporter
+    participant line as LINE
+    participant webhook as App: webhook<br/>controllers/line.py
+    participant postgres as PostgreSQL
+
+    %% the PDPA card and the welcome text are fixed words in code, not written by Gemini
+
+    %% 1. Reporter adds the bot
+    rect rgba(120, 160, 255, 0.12)
+        reporter ->> line: add the bot as a friend, or unblock it
+        line ->> webhook: follow event
+        webhook ->> line: reply PDPA card, before touching the database
+        line ->> reporter: PDPA card with accept button
+        webhook ->> postgres: users.blocked_at = empty<br/>no user row yet: nothing changes
+        webhook -->> line: 200 OK
+        Note over reporter,postgres: accepted before and unblocks: card again, back in the broadcast pick list
+    end
+
+    %% 2. Reporter writes before accepting
+    rect rgba(255, 190, 110, 0.12)
+        opt reporter sends a message before accepting
+            reporter ->> line: any message
+            line ->> webhook: message event
+            webhook ->> postgres: find user by LINE id
+            postgres -->> webhook: not found
+            webhook ->> line: reply PDPA card again
+            line ->> reporter: PDPA card
+            Note over webhook: message not saved, not sent to Gemini
+        end
+    end
+
+    %% 3. Reporter accepts
+    rect rgba(120, 220, 160, 0.12)
+        reporter ->> line: tap accept
+        line ->> webhook: postback pdpa_accept
+        webhook ->> postgres: create user, pdpa_accepted_at = now<br/>tap again: same user, same time
+        webhook ->> line: reply fixed welcome text
+        line ->> reporter: "thanks for accepting, start by typing about your area,<br/>for example water stands in front of the house after rain"
+        webhook -->> line: 200 OK
+    end
+
+    %% next messages: sequence-normal.mmd

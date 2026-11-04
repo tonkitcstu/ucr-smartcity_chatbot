@@ -1,4 +1,4 @@
-"""H12 ท่อส่ง push message — milestone 2.0.1 ข้อ 3 · spec ใน #235 · แบบ docs/designs/09-modules/h12-push.puml"""
+"""H12 ท่อส่ง push message — milestone 2.0.1 ข้อ 3 · spec ใน #235 · แบบ docs/diagrams/sequence-push.mmd"""
 
 from datetime import UTC, datetime
 from uuid import uuid4

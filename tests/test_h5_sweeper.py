@@ -1,4 +1,4 @@
-"""H5 Sweeper ปิดใบ — S7 · spec ใน #153 · แบบ docs/designs/09-modules/h5-sweeper.puml"""
+"""H5 Sweeper ปิดใบ — S7 · spec ใน #153 · แบบ docs/diagrams/sequence-leaving.mmd"""
 
 import json
 
@@ -257,7 +257,7 @@ async def test_sweep_with_no_sessions_does_nothing(client, db, redis):
     assert await jobs(redis) == []
 
 
-# --- #239 ② เพดานข้อความใน buffer ต่อใบ — spec ใน #239 · แบบ docs/designs/09-modules/239-buffer-limit.puml ---
+# --- #239 ② เพดานข้อความใน buffer ต่อใบ — spec ใน #239 · แบบ docs/diagrams/sequence-hit-limit.mmd ---
 
 
 async def test_sweep_skips_suspended_session(client, db, redis):

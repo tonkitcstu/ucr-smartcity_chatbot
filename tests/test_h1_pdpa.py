@@ -1,4 +1,4 @@
-"""H1 ผู้แจ้งยอมรับ PDPA — S1 · spec ใน #149 · แบบ docs/designs/09-modules/h1-pdpa.puml"""
+"""H1 ผู้แจ้งยอมรับ PDPA — S1 · spec ใน #149 · แบบ docs/diagrams/sequence-pdpa.mmd"""
 
 from tests.line_webhook import follow_event, post_webhook, postback_event, sign, text_event, webhook_body
 

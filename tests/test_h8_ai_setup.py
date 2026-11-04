@@ -1,4 +1,4 @@
-"""H8 ต่อ AI ข้างนอก + ค่าเริ่มต้น prompt / model — TC5 · spec ใน #194 · แบบ docs/designs/09-modules/h8-ai-setup.puml"""
+"""H8 ต่อ AI ข้างนอก + ค่าเริ่มต้น prompt / model — TC5 · spec ใน #194 · แบบ docs/setup.md"""
 
 import os
 
@@ -168,7 +168,7 @@ async def test_live_structured_matches_analysis():
     assert len(analysis.reports) >= 1
 
 
-# --- H9 รับตำแหน่งและสติกเกอร์ — S4 S13 · spec ใน #219 · แบบ docs/designs/09-modules/h9-location-sticker.puml ---
+# --- H9 รับตำแหน่งและสติกเกอร์ — S4 S13 · spec ใน #219 · แบบ docs/diagrams/sequence-normal.mmd ---
 
 
 def test_default_prompts_explain_system_notes():
@@ -180,7 +180,7 @@ def test_default_prompts_explain_system_notes():
     assert "sticker" in default_config.CHAT_PROMPT
 
 
-# --- H10 ตัวคุยเลือกปุ่มใต้ข้อความ — S3 S4 · spec ใน #226 · แบบ docs/designs/09-modules/h10-quick-reply.puml ---
+# --- H10 ตัวคุยเลือกปุ่มใต้ข้อความ — S3 S4 · spec ใน #226 · แบบ docs/diagrams/sequence-normal.mmd ---
 
 
 def test_default_chat_prompt_explains_buttons():
@@ -192,7 +192,7 @@ def test_default_chat_prompt_explains_buttons():
     assert "20" in default_config.CHAT_PROMPT
 
 
-# --- H11 ตัวคุยแยกคำตอบเป็นหลายข้อความ — milestone 2.0.1 ข้อ 2 · spec ใน #233 · แบบ docs/designs/09-modules/h11-multi-message.puml ---
+# --- H11 ตัวคุยแยกคำตอบเป็นหลายข้อความ — milestone 2.0.1 ข้อ 2 · spec ใน #233 · แบบ docs/diagrams/sequence-normal.mmd ---
 
 
 def test_default_chat_prompt_explains_splitting_texts():
@@ -203,7 +203,7 @@ def test_default_chat_prompt_explains_splitting_texts():
     assert "5" in default_config.CHAT_PROMPT
 
 
-# --- H13 ตัวคุยยื่นปุ่มคำตอบที่แต่งเอง — milestone 2.0.1 ข้อ 1 · spec ใน #237 · แบบ docs/designs/09-modules/h13-answer-buttons.puml ---
+# --- H13 ตัวคุยยื่นปุ่มคำตอบที่แต่งเอง — milestone 2.0.1 ข้อ 1 · spec ใน #237 · แบบ docs/diagrams/sequence-normal.mmd ---
 
 
 def test_default_chat_prompt_explains_answer_buttons():
@@ -214,7 +214,7 @@ def test_default_chat_prompt_explains_answer_buttons():
     assert "ข้าม" in default_config.CHAT_PROMPT.split("# Buttons under messages")[1].split("# Never")[0]
 
 
-# --- #242 เลือกบน DB ได้ว่าจะใช้ ai_configs แถวไหน — spec ใน #242 · แบบ docs/designs/09-modules/242-select-ai-config.puml ---
+# --- #242 เลือกบน DB ได้ว่าจะใช้ ai_configs แถวไหน — spec ใน #242 · แบบ docs/setup.md ---
 
 
 async def add_config(db, name):

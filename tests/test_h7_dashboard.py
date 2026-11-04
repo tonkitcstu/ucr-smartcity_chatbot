@@ -1,6 +1,6 @@
-"""H7 ทีมออกแบบดึงรายงาน — S8 · spec ใน #155 · แบบ docs/designs/09-modules/h7-dashboard.puml
+"""H7 ทีมออกแบบดึงรายงาน — S8 · spec ใน #155 · แบบ docs/api.md
 
-หน้าตา JSON: docs/designs/09-modules/h7-dashboard-api.md
+หน้าตา JSON: docs/api.md
 ตำแหน่ง (lat / lng · แถว location) และสติกเกอร์ — H9 ท้ายไฟล์ · spec ใน #219
 """
 
@@ -453,7 +453,7 @@ async def test_session_id_must_be_uuid(client):
     assert response.status_code == 422
 
 
-# --- H9 รับตำแหน่งและสติกเกอร์ — S4 S13 · spec ใน #219 · แบบ docs/designs/09-modules/h9-location-sticker.puml ---
+# --- H9 รับตำแหน่งและสติกเกอร์ — S4 S13 · spec ใน #219 · แบบ docs/diagrams/sequence-normal.mmd ---
 
 
 async def test_transcript_has_pin_and_sticker_rows(client, db, tmp_path):
@@ -493,7 +493,7 @@ async def test_report_carries_its_pin(client, db, ai_config, tmp_path):
     assert pins == {str(pinned): (35.67966, 139.73669), str(plain): (None, None)}
 
 
-# --- #239 ② เพดานข้อความใน buffer ต่อใบ — spec ใน #239 · แบบ docs/designs/09-modules/239-buffer-limit.puml ---
+# --- #239 ② เพดานข้อความใน buffer ต่อใบ — spec ใน #239 · แบบ docs/diagrams/sequence-hit-limit.mmd ---
 
 
 async def test_transcript_keeps_skipped_messages(client, db, tmp_path):
@@ -530,7 +530,7 @@ async def test_transcript_tells_which_messages_were_skipped(client, db, tmp_path
     assert [m["status"] for m in response.json()] == ["skipped", "answered", "answered"]
 
 
-# --- ตัวกรองความรุนแรงกับช่วงวัน + รายงานใบเดียว — S33 · spec docs/designs/09-modules/h7-dashboard-api.md ---
+# --- ตัวกรองความรุนแรงกับช่วงวัน + รายงานใบเดียว — S33 · spec docs/api.md ---
 
 
 # รายงานที่ helper report() สร้างเป็น medium เสมอ · ตั้งความรุนแรงที่ต้องการทีหลัง

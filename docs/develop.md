@@ -103,7 +103,11 @@ docker/          Dockerfiles and compose files for each container
 docs/diagrams/   Mermaid diagrams of how it works
 ```
 
-A call goes one way: from `api` to `controllers` or `workers`, then to `services`, then to `clients`.
+The usual direction of a call: from `api` to `controllers` or `workers`, then to `services`, then to `clients`. These imports skip a layer:
+
+- `controllers/line.py`, `workers/worker.py` and `workers/broadcaster.py` use `clients/line.py`
+- `controllers/health.py` uses `clients/database.py` and `clients/redis.py`
+- `api/dashboard.py` uses `services/auth.py`
 
 ## 7. Workflow
 

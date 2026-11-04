@@ -27,7 +27,7 @@ cp .env.example .env
 | `DASHBOARD_API_KEY` | for the dashboard | none | key the dashboard sends · not set: every `/api/dashboard` route gives 503 |
 | `API_ENDPOINT` | no | Gemini's OpenAI-compatible URL | must end with `/v1beta/openai/` |
 | `APP_PORT` | no | `8000` | port on your machine for the app |
-| `WORKER_ENABLED` | no | `true` | `false`: messages are saved, but nobody answers or closes chats |
+| `WORKER_ENABLED` | no | `true` | `false`: messages are saved, but nobody answers or closes chats · with Docker, the app shows `unhealthy` |
 | `SILENCE_SECONDS` | no | `3` | seconds of no new message before the bot answers |
 | `CLOSE_AFTER_MINUTES` | no | `120` | minutes of no new message before a chat closes and becomes reports |
 | `SWEEP_EVERY_SECONDS` | no | `60` | how often the sweeper looks for quiet chats |
@@ -80,7 +80,7 @@ Good to know:
 
 - `POSTGRES_PASSWORD` is used only when the database is first created. Changing it later breaks the app's connection.
 - `schema.sql` runs only on an empty `pgdata` volume. After a change to `schema.sql`, run `docker compose down -v`, then `docker compose up -d --build`. This deletes all data.
-- Redis goes down and comes back: the worker does not come back, and `/health` gives 503. Run `docker compose restart app`.
+- Redis or PostgreSQL goes down and comes back: the worker or the sweeper can stop, and `/health` gives 503. Run `docker compose restart app`.
 - Port 8000 is in use: set `APP_PORT` in `.env`.
 - Each container has its own compose file in `docker/`. Start one alone from the repo root, for example `docker compose --env-file .env -f docker/app/docker-compose.yml up -d --build`. The app then does not wait for the database. Compose warns about orphan containers. **Do not add `--remove-orphans`**: it deletes the other containers.
 

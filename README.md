@@ -1,4 +1,4 @@
-# UCR Chatbot 2.0
+# UCR Chatbot
 
 A LINE bot for UCR / TONKIT Lab. People in a community tell it about their environment and the city around their home. Gemini chats with them, then turns each chat into reports with a location. The city design team reads the reports and uses them to choose what to improve first.
 
@@ -91,7 +91,7 @@ Mermaid files in [`docs/diagrams/`](docs/diagrams/):
 
 API key: header `Authorization: Bearer <key>`, the same value as `DASHBOARD_API_KEY` in `.env`. Wrong or missing key gives 401. `DASHBOARD_API_KEY` not set gives 503.
 
-Full routes for Postman: [`docs/api.md`](docs/api.md) · JSON and curl for each route: [`docs/designs/09-modules/h7-dashboard-api.md`](docs/designs/09-modules/h7-dashboard-api.md)
+Full routes for Postman: [`docs/api.md`](docs/api.md)
 
 ## Docs
 
@@ -99,4 +99,3 @@ Full routes for Postman: [`docs/api.md`](docs/api.md) · JSON and curl for each 
 - [`docs/develop.md`](docs/develop.md): run on your machine, tests, dependencies, code layout, workflow
 - [`docs/diagrams/`](docs/diagrams/): how it works
 - [`docs/api.md`](docs/api.md): all routes
-- [`docs/requirements/`](docs/requirements/): needs, constraints, user stories

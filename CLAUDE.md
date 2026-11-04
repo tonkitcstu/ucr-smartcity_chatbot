@@ -18,8 +18,7 @@ already give checkbox answers. **We want the story people tell.** This includes
 broadcast messages, when the bot messages people first: the AI writes one message a
 day, and everyone picked that day gets it.
 
-Fixed text is allowed in only 3 cases (TC7 in `docs/requirements/02-constraints.md`:
-the AI always writes the messages people get):
+Fixed text is allowed in only 3 cases:
 1. Texts for when the bot cannot answer with the AI, so the reporter is never left in silence:
    the AI fails or is too slow, the daily tokens are used up, or one chat has too many waiting messages.
 2. Messages an admin types. Not built yet.

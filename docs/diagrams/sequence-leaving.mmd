@@ -1,0 +1,70 @@
+---
+title: Leaving — Reporter Goes Quiet, Chat Becomes Reports
+config:
+  theme: base
+  themeVariables:
+    fontFamily: "Inter, Helvetica, Arial, sans-serif"
+    fontSize: 14px
+---
+
+sequenceDiagram
+    autonumber
+    actor reporter as Reporter
+    participant line as LINE
+    participant webhook as App: webhook<br/>controllers/line.py
+    participant sweeper as App: sweeper<br/>workers/sweeper.py
+    participant worker as App: worker<br/>workers/worker.py
+    participant redis as Redis
+    participant postgres as PostgreSQL
+    participant gemini as Gemini
+
+    %% 1. Reporter leaves
+    rect rgba(148, 163, 184, 0.15)
+        Note over reporter: stops sending messages
+        opt reporter blocks the bot
+            reporter ->> line: block
+            line ->> webhook: unfollow event
+            webhook ->> postgres: users.blocked_at = now<br/>no more broadcast messages
+            webhook -->> line: 200 OK
+            Note over webhook,postgres: the open session closes the same way
+        end
+    end
+
+    %% 2. Sweeper closes the silent session
+    rect rgba(255, 190, 110, 0.12)
+        loop every SWEEP_EVERY_SECONDS 60
+            sweeper ->> postgres: find open sessions silent over CLOSE_AFTER_MINUTES 120<br/>broadcast with no reply: BROADCAST_WAIT_HOURS 24
+            sweeper ->> redis: IDLE to CLOSING
+            Note over sweeper: not IDLE, chatting or SUSPENDED: skip this session
+            sweeper ->> postgres: session to closed, only if still silent
+            alt closed
+                sweeper ->> redis: delete all keys of the session
+                sweeper ->> redis: push analyse job
+            else a message came in while closing
+                sweeper ->> redis: CLOSING to IDLE
+                opt buffer has messages
+                    sweeper ->> redis: IDLE to BUFFERING, push chat job
+                end
+                Note over sweeper,redis: chat goes on: sequence-normal.mmd
+            end
+        end
+    end
+
+    %% 3. Worker turns the chat into reports
+    rect rgba(120, 220, 160, 0.12)
+        worker ->> redis: pop analyse job
+        worker ->> postgres: read transcript, without skipped messages
+        alt reporter wrote nothing, a broadcast with no reply
+            worker ->> postgres: session to analysed, no Gemini call
+        else reporter wrote something
+            worker ->> postgres: read active ai_config, analyser prompt and model
+            worker ->> gemini: analyser prompt + transcript<br/>photos and pins labelled photo n, location n
+            gemini -->> worker: 0 to n reports JSON
+            worker ->> postgres: save ai_call
+            worker ->> postgres: save reports, lat/lng from location n<br/>link photo n to its report
+            worker ->> postgres: session to analysed
+        end
+        Note over worker,postgres: reports show in GET /api/dashboard/reports<br/>the next message from the reporter opens a new session
+    end
+
+    %% broken analyser JSON: sequence-fallback.mmd

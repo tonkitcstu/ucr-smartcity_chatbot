@@ -1,12 +1,12 @@
-# UCR Chatbot — Setup
+# Setup UCR Chatbot 2.0
+
+Run the bot with Docker. To change the code or run without Docker, see [`develop.md`](develop.md).
 
 ## What you need
 
-- A LINE Messaging API channel, with its channel secret and channel access token. Use a test channel while you develop.
-- A Gemini API key from Google AI Studio.
-- One of these:
-  - **Docker** — runs the app, PostgreSQL and Redis for you.
-  - **On your machine** — Python 3.12 or newer, [uv](https://docs.astral.sh/uv/), PostgreSQL with PostGIS (macOS: `brew install postgis`), Redis.
+- Docker
+- A LINE Messaging API channel, with its channel secret and channel access token
+- A Gemini API key from Google AI Studio
 
 ## 1. Make `.env`
 
@@ -18,16 +18,13 @@ cp .env.example .env
 
 | Key | Needed | Default | What it does |
 |---|---|---|---|
-| `LINE_CHANNEL_SECRET` | yes | — | checks LINE's signature on the webhook |
-| `LINE_CHANNEL_ACCESS_TOKEN` | yes | — | reply, push, loading dots, photo download, monthly message count |
-| `GEMINI_API_KEY` | yes | — | Gemini key |
+| `LINE_CHANNEL_SECRET` | yes | none | checks LINE's signature on the webhook |
+| `LINE_CHANNEL_ACCESS_TOKEN` | yes | none | reply, push, loading dots, photo download, monthly message count |
+| `GEMINI_API_KEY` | yes | none | Gemini key |
+| `POSTGRES_PASSWORD` | yes | none | used once, when the database is first created · letters and numbers only |
+| `DASHBOARD_API_KEY` | for the dashboard | none | key the dashboard sends · not set: every `/api/dashboard` route gives 503 |
 | `API_ENDPOINT` | no | Gemini's OpenAI-compatible URL | must end with `/v1beta/openai/` |
-| `DASHBOARD_API_KEY` | for the dashboard | — | key the dashboard sends · not set: every `/api/dashboard` route gives 503 |
-| `POSTGRES_PASSWORD` | Docker only | — | used once, when the database is first created · letters and numbers only |
-| `APP_PORT` | Docker only | `8000` | port on your machine for the app |
-| `DATABASE_URL` | your machine only | — | PostgreSQL to use · Docker sets its own |
-| `REDIS_URL` | your machine only | `redis://localhost:6379/0` | Redis to use · Docker sets its own |
-| `UPLOADS_DIR` | no | `uploads/` in the repo | folder for photo files · Docker uses the `uploads` volume |
+| `APP_PORT` | no | `8000` | port on your machine for the app |
 | `WORKER_ENABLED` | no | `true` | `false`: messages are saved, but nobody answers or closes chats |
 | `SILENCE_SECONDS` | no | `3` | seconds of no new message before the bot answers |
 | `CLOSE_AFTER_MINUTES` | no | `120` | minutes of no new message before a chat closes and becomes reports |
@@ -61,7 +58,7 @@ All 3 containers must show `healthy`.
 
 | Container | What is in it | Data is kept in volume |
 |---|---|---|
-| `app` | FastAPI, worker, sweeper and broadcaster in one process | `uploads` — photos |
+| `app` | FastAPI, worker, sweeper and broadcaster in one process | `uploads`: photos |
 | `postgres` | PostgreSQL 18 + PostGIS · makes database `ucr-chat-v2-alpha` and runs `schema.sql` when the volume is empty | `pgdata` |
 | `redis` | Redis 8, saves to disk every 60 seconds | `redisdata` |
 
@@ -85,29 +82,7 @@ Good to know:
 - Port 8000 is in use: set `APP_PORT` in `.env`.
 - Each container has its own compose file in `docker/`. Start one alone from the repo root, for example `docker compose --env-file .env -f docker/app/docker-compose.yml up -d --build`. The app then does not wait for the database. Compose warns about orphan containers. **Do not add `--remove-orphans`**: it deletes the other containers.
 
-## 3. Run on your machine
-
-```bash
-uv sync
-```
-
-```bash
-createdb ucr-chat-v2-alpha
-```
-
-```bash
-psql ucr-chat-v2-alpha -f schema.sql
-```
-
-Set `DATABASE_URL` in `.env` to this database. `schema.sql` has no `IF NOT EXISTS`: running it on a database that has tables fails.
-
-```bash
-uv run uvicorn app.main:app --reload
-```
-
-Without uv: `pip install -r requirements.txt`. This file is made from `uv.lock`. Change dependencies in `pyproject.toml`, then make the file again with the command at its top.
-
-## 4. Check it is up
+## 3. Check it is up
 
 ```bash
 curl -i http://localhost:8000/health
@@ -123,7 +98,7 @@ All up gives 200. One part down gives 503, and the JSON shows which one:
 
 On the first start with an empty database, the app adds the first model, prompts and AI settings from `app/core/default_config.py`.
 
-## 5. Connect LINE
+## 4. Connect LINE
 
 1. Give the app a public HTTPS URL. On a dev machine: `ngrok http 8000`.
 2. In LINE Developers Console, open your channel, then the Messaging API tab:
@@ -133,7 +108,7 @@ On the first start with an empty database, the app adds the first model, prompts
 3. In LINE Official Account Manager, turn off auto-reply messages and the greeting message. The bot sends its own PDPA card.
 4. Add the bot as a friend. You get the PDPA card.
 
-## 6. Turn on broadcast
+## 5. Turn on broadcast
 
 1. In `.env`, set `BROADCAST_ENABLED=true` and `FORECAST_URL`. `WORKER_ENABLED` must stay `true`.
 2. Start the app again:
@@ -152,7 +127,7 @@ docker compose exec postgres psql -U ucr -d ucr-chat-v2-alpha -c "SELECT forecas
 
 `status`: `scheduled` = waiting to send · `sent` = done · `expired` = not sent by 20:00.
 
-## 7. AI settings
+## 6. AI settings
 
 Models, prompts and limits are in the database, in table `ai_configs`, in the row with `is_active = true`. Only one row can be active. The app reads it again for every job, so a change works from the next message.
 
@@ -167,25 +142,3 @@ Token limits count only the chat calls, not the analyser.
 ```bash
 docker compose exec postgres psql -U ucr -d ucr-chat-v2-alpha -c "SELECT * FROM ai_configs WHERE is_active;"
 ```
-
-## 8. Tests
-
-Tests need PostgreSQL with PostGIS and Redis on your machine. The Docker containers open no ports.
-
-```bash
-createdb ucr_nongmuang_test
-```
-
-```bash
-uv run pytest
-```
-
-- Tests use database `ucr_nongmuang_test` and Redis db 15. Change them with `TEST_DATABASE_URL` and `TEST_REDIS_URL`.
-- **Every run wipes all tables in that database and everything in Redis db 15.** Never point them at real data.
-- Tests that call Gemini for real are skipped. Run them with `LIVE_AI=1 uv run pytest`.
-
-## Not in git
-
-- `.env` — real values
-- `uploads/` — photos from reporters
-- `local/` — personal notes

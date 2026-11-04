@@ -24,7 +24,7 @@ Gemini writes every message the bot sends. Fixed texts in code: the fallback tex
 | broadcaster | messages reporters first, only when `BROADCAST_ENABLED=true` |
 | `postgres` container | PostgreSQL 18 + PostGIS: users, sessions, messages, reports, AI settings and prompts |
 | `redis` container | Redis 8: messages waiting for an answer, chat state, chat history, job queue |
-| Gemini | `gemini-3.5-flash-lite` through its OpenAI-compatible API |
+| Gemini | through its OpenAI-compatible API · default model `gemini-3.5-flash-lite`, the real one is set in table `ai_configs` |
 | LINE Messaging API | webhook in, reply and push out |
 
 ## Setup

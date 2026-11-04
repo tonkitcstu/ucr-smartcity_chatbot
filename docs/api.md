@@ -105,5 +105,5 @@ One message, from route 6, oldest first:
 | `type` | `text`, `image`, `location` or `sticker` | kind of message |
 | `content` | text or `null` | text, or LINE's words for a sticker |
 | `lat`, `lng` | number or `null` | for `location` |
-| `status` | `pending`, `answered` or `skipped` | `skipped`: sent while the chat was paused for too many messages, the analyser did not read it |
+| `status` | `pending`, `answered` or `skipped` | `skipped`: waiting when the chat got too full, or sent while it was paused · the analyser does not read it |
 | `attachment` | object or `null` | for `image`: `attachment_id` and `url` for route 5 |

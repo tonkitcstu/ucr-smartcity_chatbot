@@ -1,0 +1,62 @@
+---
+title: Hit a Limit — Fixed Text Instead of Gemini
+config:
+  theme: base
+  themeVariables:
+    fontFamily: "Inter, Helvetica, Arial, sans-serif"
+    fontSize: 14px
+---
+
+sequenceDiagram
+    autonumber
+    actor reporter as Reporter
+    participant line as LINE
+    participant webhook as App: webhook<br/>controllers/line.py
+    participant worker as App: worker<br/>workers/worker.py
+    participant redis as Redis
+    participant postgres as PostgreSQL
+
+    %% limits come from the active ai_configs row: user_daily_token_limit, system_daily_token_limit, session_buffer_limit
+    %% tokens count only chat calls of today, Thai time · the fixed texts are written in code, not by Gemini
+
+    %% 1. Every message is saved first
+    rect rgba(120, 160, 255, 0.12)
+        reporter ->> line: message
+        line ->> webhook: message event
+        webhook ->> postgres: find user, open session, save message
+    end
+
+    %% 2. Checked in this order · the first match answers
+    rect rgba(254, 202, 202, 0.3)
+        alt session is SUSPENDED
+            webhook ->> postgres: mark buffered messages and this one skipped
+            webhook ->> redis: clear buffer
+            webhook ->> line: reply fixed "too many messages, chat paused, come back tomorrow" text
+            line ->> reporter: fixed text
+        else this reporter's tokens today at or over user_daily_token_limit<br/>or all reporters' tokens today at or over system_daily_token_limit
+            webhook ->> line: reply fixed "quota reached today, your story is kept, come back tomorrow" text
+            line ->> reporter: fixed text
+            Note over webhook,postgres: message stays pending: not buffered, no job<br/>the analyser still reads it when the session closes
+        else buffer at or over session_buffer_limit, a photo counts 1
+            webhook ->> postgres: mark buffered messages and this one skipped
+            webhook ->> redis: clear buffer, SUSPENDED for 24 hours
+            webhook ->> line: reply fixed "too many messages, chat paused, come back tomorrow" text
+            line ->> reporter: fixed text
+        else no limit hit
+            webhook ->> redis: add to buffer: sequence-normal.mmd
+        end
+        webhook -->> line: 200 OK
+    end
+
+    %% 3. Worker and sweeper with a SUSPENDED session
+    rect rgba(120, 220, 160, 0.12)
+        alt suspended while the worker waits for silence
+            worker ->> redis: BUFFERING to PROCESSING fails
+            Note over worker: job ends, no Gemini call, no reply
+        else suspended while Gemini is answering
+            Note over worker: answer to the earlier messages is still sent<br/>state stays SUSPENDED, no new chat job
+        end
+        Note over redis: SUSPENDED key expires after 24 hours: IDLE<br/>sweeper skips the session until then
+    end
+
+    %% broadcast limits, 10 a day, messages left this month, system tokens, nothing on the 31st: sequence-push.mmd

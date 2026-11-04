@@ -1,7 +1,7 @@
 [project]
 name = "ucr-smartcity-chatbot"
-version = "0.1.0"
-description = "น้องเมือง — บอทเก็บเสียงคนในชุมชนเรื่องสภาพแวดล้อมเมือง ให้ทีมออกแบบใช้ตัดสินใจ"
+version = "2.0.0"
+description = "UCR Chatbot: a LINE bot that turns what people tell about their community into reports for the city design team"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

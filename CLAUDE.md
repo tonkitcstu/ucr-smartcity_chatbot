@@ -1,21 +1,24 @@
-# UCR Smartcity Chatbot — น้องเมือง
+# UCR Chatbot 2.0
 
-## โปรเจกต์นี้คืออะไร
+## What this project is
 
-บอทบน LINE OA (UCR / TONKIT Lab) ที่ชวนคนในชุมชนเล่าเรื่องสภาพแวดล้อมและ
-โครงสร้างพื้นฐานแถวบ้าน แล้วสกัดออกมาเป็น **รายงาน** พร้อมพิกัด ปลายทางคือ
-**หมุดบนแผนที่ให้ทีมออกแบบเมือง**ใช้ตัดสินใจว่าควรปรับปรุงตรงไหนก่อน
+A bot on a LINE Official Account (UCR / TONKIT Lab). It invites people in a community
+to talk about the environment and infrastructure near their home. Each chat becomes
+**reports** with a location. The end result is **pins on a map for the city design
+team**, who use them to choose what to improve first.
 
-sensor บอกได้ว่าตรงนี้ 38°C แต่บอกไม่ได้ว่ายายที่เดินไปตลาดทุกเช้าเดินไม่ไหว
-เพราะไม่มีร่มเงา — **เราเก็บส่วนหลัง** เราไม่ใช่ศูนย์ช่วยเหลือ ไม่ได้เป็นคนไปแก้
+A sensor measures 38°C at a spot. A grandmother who walks to the market every morning
+says she can no longer make it, because there is no shade. **We collect her story.**
+The bot does not send help and does not fix problems.
 
-**คำถามเป็นของ AI ไม่ใช่ของเรา** ทั้งโปรเจกต์นี้เดินมาจากการทิ้งคำถามตายตัวกับ
-state machine ถ้าเจอตัวเองกำลังจะเขียนข้อความสำเร็จรูปหรือการ์ดปุ่มใช่/ไม่ใช่ลง
-ในโค้ด แปลว่ากำลังเดินถอยหลัง — คำตอบแบบเช็คบ็อกซ์ sensor ก็ให้ได้อยู่แล้ว
-**ของที่เราต้องการคือเรื่องที่เขาเล่า** (รวมข้อความ broadcast ที่เราทักไปก่อนด้วย
-AI แต่งสดทุกครั้ง)
+**The AI writes the questions.** This whole project came from dropping fixed questions
+and the state machine. If you are about to write a ready-made message or a yes/no
+button card in the code, you are going backwards: a sensor can already give checkbox
+answers. **We want the story people tell.** This includes broadcast messages, when the
+bot messages people first: the AI writes them fresh every time.
 
-ข้อยกเว้นมีแค่ 3 กรณี (ดู TC7 ใน `docs/requirements/02-constraints.md`):
-1. ข้อความสำรองตอน AI ล่มหรือโควตาหมด — ผู้แจ้งต้องไม่ถูกปล่อยให้เงียบ
-2. ข้อความที่แอดมินพิมพ์เอง
-3. Flex message แจ้ง PDPA พร้อมปุ่มยอมรับ — ถ้อยคำต้องตายตัวเพราะต้องผ่านการตรวจ
+Fixed text is allowed in only 3 cases (TC7 in `docs/requirements/02-constraints.md`:
+the AI always writes the messages people get):
+1. The fallback text when the AI is down or the quota is used up, so the reporter is never left in silence.
+2. Messages an admin types.
+3. The PDPA Flex message with its accept button, and the welcome text after accept. The words must stay fixed because they are reviewed.

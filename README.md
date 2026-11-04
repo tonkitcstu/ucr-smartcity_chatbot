@@ -1,152 +1,86 @@
-# UCR Smartcity Chatbot — น้องเมือง
+# UCR Chatbot
 
-บอทบน LINE OA (UCR / TONKIT Lab) ที่ชวนคนในชุมชนเล่าเรื่องสภาพแวดล้อมและ
-โครงสร้างพื้นฐานแถวบ้าน แล้วสกัดออกมาเป็นรายงานพร้อมพิกัด ปลายทางคือหมุดบน
-แผนที่ให้ทีมออกแบบเมืองใช้ตัดสินใจว่าควรปรับปรุงตรงไหนก่อน
+A LINE bot for UCR / TONKIT Lab. People in a community tell it about their environment and the city around their home. Gemini chats with them, then turns each chat into reports with a location. The city design team reads the reports and uses them to choose what to improve first.
 
-กฎการเขียนโค้ดอยู่ใน [`CLAUDE.md`](CLAUDE.md) — **อ่านก่อนแก้โค้ด**
+Setup and run: [`docs/setup.md`](docs/setup.md) · Code rules: [`CLAUDE.md`](CLAUDE.md)
 
-## ต้องมีอะไรบ้าง
+## What it does
 
-| ของ | ใช้ทำอะไร |
+- **Chat** — a reporter sends text, photos, location pins or stickers. The bot waits until they stop typing for 3 seconds, then Gemini answers with up to 5 messages and buttons: location, camera, camera roll, or answer words.
+- **Reports** — a chat that is quiet for 2 hours closes. Gemini reads the whole chat and writes 0 to n reports. Each report has a description, tags, severity, who is affected, time of day, place, location and photos.
+- **Dashboard API** — the design team reads reports, photos and chats with an API key.
+- **PDPA** — a new reporter gets the PDPA card first. Nothing is saved until they tap accept.
+- **Limits** — tokens per reporter per day, tokens for everyone per day, and messages waiting in one chat. A reporter who hits a limit gets a fixed text instead of Gemini.
+- **Fallback** — Gemini fails or takes over 50 seconds: the reporter gets a fixed text, and their messages stay for the next answer.
+- **Broadcast** — off by default. Every day the bot messages up to 10 random reporters first. Rain in the forecast from 08:00 to 20:00 gets a rain message, other days get a friendly hello. No message on the 31st.
+
+Gemini writes every message the bot sends. Fixed texts in code: the fallback text, the limit texts, and the PDPA card with its welcome text.
+
+## How it runs
+
+| Part | What it does |
 |---|---|
-| Python 3.12 ขึ้นไป + [uv](https://docs.astral.sh/uv/) | รันแอป ลง dependency จาก `uv.lock` |
-| PostgreSQL + PostGIS | ของถาวร: ผู้แจ้ง ใบ ข้อความ รายงาน · `schema.sql` เปิด extension `postgis` (macOS: `brew install postgis`) |
-| Redis | ของชั่วคราว: ข้อความที่ยังไม่ตอบ state ของใบ คิวงาน |
-| key ของ Gemini | AI ที่คุยกับผู้แจ้งและทำรายงาน |
-| LINE OA ช่องทดสอบ | ช่องทางแชท — ห้ามใช้ช่องจริงตอนพัฒนา |
+| `app` container | FastAPI on port 8000, with 3 background loops in the same process: worker, sweeper, broadcaster |
+| worker | answers chats with Gemini, turns closed chats into reports |
+| sweeper | closes quiet chats every 60 seconds |
+| broadcaster | messages reporters first, only when `BROADCAST_ENABLED=true` |
+| `postgres` container | PostgreSQL 18 + PostGIS: users, sessions, messages, reports, AI settings and prompts |
+| `redis` container | Redis 8: messages waiting for an answer, chat state, chat history, job queue |
+| Gemini | `gemini-3.5-flash-lite` through its OpenAI-compatible API |
+| LINE Messaging API | webhook in, reply and push out |
 
-แอปต่อ PostgreSQL ตอนเปิด ต่อไม่ได้แอปไม่ขึ้น
+## Diagrams
 
-ไม่อยากลงเอง: ข้ามไป [รันด้วย Docker](#รันด้วย-docker) ต้องมีแค่ Docker
+Mermaid files in [`docs/diagrams/`](docs/diagrams/):
 
-## ตั้งเครื่องใหม่
-
-```bash
-uv sync
-
-cp .env.example .env        # แล้วเติมค่าจริง (คำอธิบายอยู่ในไฟล์)
-
-createdb ucr-chat-v2-alpha
-psql ucr-chat-v2-alpha -f schema.sql      # ครั้งเดียว — ฐานเดียวกับ DATABASE_URL ใน .env
-```
-
-`schema.sql` ไม่มี `IF NOT EXISTS` รันซ้ำบนฐานที่มีตารางแล้วจะ error
-
-ไม่ใช้ uv: `pip install -r requirements.txt` ได้ dependency ชุดเดียวกัน
-(ไฟล์นี้สร้างจาก `uv.lock` — แก้ dependency ที่ `pyproject.toml` แล้วสร้างใหม่ด้วยคำสั่งที่หัวไฟล์)
-
-## รัน
-
-```bash
-uv run uvicorn app.main:app --reload
-```
-
-เปิดครั้งแรกบนฐานเปล่า แอปใส่ model กับ prompt ตั้งต้นลง PostgreSQL ให้เอง
-
-เช็คว่าขึ้นครบ:
-
-```bash
-curl -i http://localhost:8000/health
-```
-
-อยู่ครบตอบ 200 ขาดตัวใดตัวหนึ่งตอบ 503 และบอกตัวที่ขาด
-
-```json
-{"database": true, "redis": true, "worker": true, "sweeper": true}
-```
-
-ต่อ LINE: `ngrok http 8000` แล้วตั้ง webhook ของช่องทดสอบเป็น `https://<ngrok>/webhook/line`
-
-## รันด้วย Docker
-
-ต้องมีแค่ Docker — ไม่ต้องลง Python, PostgreSQL หรือ Redis เอง
-
-```bash
-cp .env.example .env            # เติมค่าจริง และตั้ง POSTGRES_PASSWORD
-docker compose up -d --build
-docker compose ps               # ทั้ง 3 ต้องเป็น healthy
-curl -i http://localhost:8000/health
-```
-
-ได้ 3 container
-
-| container | มีอะไร | ข้อมูลอยู่ที่ volume |
-|---|---|---|
-| `app` | แอป (FastAPI + worker + sweeper ใน process เดียว) | `uploads` — รูป |
-| `postgres` | PostgreSQL 18 + PostGIS · สร้างฐาน `ucr-chat-v2-alpha` และรัน `schema.sql` ตอนฐานยังว่าง | `pgdata` |
-| `redis` | Redis 8 | `redisdata` |
-
-ใน container เรียกกันด้วยชื่อ service — compose ใส่ `DATABASE_URL` กับ `REDIS_URL` ทับค่าใน `.env` ให้
-`postgres` กับ `redis` ไม่เปิด port ออกนอกเครื่อง
-
-แต่ละตัวมีไฟล์ของตัวเอง `docker-compose.yml` ที่รากรวม 3 ตัวเข้าด้วยกันและบอกว่าแอปต้องรอฐานพร้อมก่อน
-
-```
-docker-compose.yml              ทั้งระบบ
-docker/
-  app/Dockerfile                image ของแอป
-  app/docker-compose.yml
-  postgres/Dockerfile           postgres:18 + PostGIS
-  postgres/docker-compose.yml
-  redis/docker-compose.yml
-```
-
-| คำสั่ง | ทำอะไร |
+| File | Shows |
 |---|---|
-| `docker compose up -d --build` | แก้โค้ดแล้ว — สร้าง image ใหม่และเปิด |
-| `docker compose up -d` | แก้แค่ค่าใน `.env` |
-| `docker compose logs -f app` | ดู log ของแอป |
-| `docker compose restart app` | เปิดแอปใหม่ |
-| `docker compose up -d --build --no-deps app` | สร้างและเปิดแอปใหม่ตัวเดียว ไม่แตะฐาน |
-| `docker compose stop redis` · `docker compose start redis` | ปิด / เปิดทีละตัว |
-| `docker compose down` | ปิดทั้งระบบ ข้อมูลยังอยู่ |
-| `docker compose down -v` | ปิดและ**ลบฐาน รูป และ Redis ทั้งหมด** |
+| [`overview-architecture.mmd`](docs/diagrams/overview-architecture.mmd) | all parts and what each one sends to the others |
+| [`overview-placement.mmd`](docs/diagrams/overview-placement.mmd) | which container each part runs in |
+| [`sequence-normal.mmd`](docs/diagrams/sequence-normal.mmd) | a message comes in, Gemini answers |
+| [`sequence-leaving.mmd`](docs/diagrams/sequence-leaving.mmd) | the reporter goes quiet or blocks the bot, the chat becomes reports |
+| [`sequence-push.mmd`](docs/diagrams/sequence-push.mmd) | the bot messages up to 10 people first |
+| [`sequence-pdpa.mmd`](docs/diagrams/sequence-pdpa.mmd) | PDPA card and accept |
+| [`sequence-hit-limit.mmd`](docs/diagrams/sequence-hit-limit.mmd) | token and message limits |
+| [`sequence-fallback.mmd`](docs/diagrams/sequence-fallback.mmd) | Gemini fails or is too slow |
+| [`broadcast-flow.mmd`](docs/diagrams/broadcast-flow.mmd) | broadcast as a flowchart |
+| [`session-states.mmd`](docs/diagrams/session-states.mmd) | chat states in Redis and who changes them |
 
-ต้องรู้:
+## API
 
-- `POSTGRES_PASSWORD` ใช้ตอนสร้างฐานครั้งแรกเท่านั้น แก้ทีหลังฐานยังใช้รหัสเดิม แอปจะต่อไม่ได้
-- ชื่อชุดตั้งไว้ในไฟล์ (`name: ucr-smartcity_chatbot`) ทุกไฟล์ — volume กับเครือข่ายเป็นชุดเดิมเสมอ ไม่ว่าโฟลเดอร์ชื่ออะไรหรือสั่งจากไฟล์ไหน
-- เปิดจากไฟล์ของตัวเดียวได้ สั่งจากราก repo และต้องใส่ `--env-file .env`:
-  `docker compose --env-file .env -f docker/app/docker-compose.yml up -d --build`
-  แบบนี้แอปไม่รอฐาน ต้องเปิด `postgres` กับ `redis` ไว้ก่อน และ compose จะเตือนว่าเจอ orphan containers (คือตัวที่ไม่อยู่ในไฟล์นั้น) — **อย่าใส่ `--remove-orphans`** มันจะลบ container ของตัวอื่น
-- Redis ดับแล้วกลับมา worker ไม่กลับมาเอง `/health` ตอบ 503 — สั่ง `docker compose restart app`
-- port 8000 ถูกใช้อยู่: ตั้ง `APP_PORT` ใน `.env`
-
-## ทางเข้าที่มี
-
-| ทาง | ทำอะไร | ใครเรียกได้ |
+| Route | What it does | Who can call it |
 |---|---|---|
-| `POST /webhook/line` | รับ event จาก LINE | ตรวจด้วยลายเซ็นของ LINE |
-| `GET /health` | PostgreSQL · Redis · worker · sweeper ยังอยู่ไหม | ทุกคน |
-| `GET /api/dashboard/reports` | รายงาน ใหม่ไปเก่า กรองด้วย `date` · `tag` · `limit` | กุญแจ API |
-| `GET /api/dashboard/attachments/{attachment_id}` | ไฟล์รูปของรายงาน | กุญแจ API |
-| `GET /api/dashboard/transcripts/{session_id}` | บทสนทนาทั้งใบ | กุญแจ API |
+| `POST /webhook/line` | gets events from LINE | LINE only, checked by LINE's signature |
+| `GET /health` | PostgreSQL, Redis, worker and sweeper are up | anyone |
+| `GET /api/dashboard/reports` | reports, newest first, filter by `date`, `start_date`, `end_date`, `tag`, `severity`, `limit` | API key |
+| `GET /api/dashboard/reports/{report_id}` | one report | API key |
+| `GET /api/dashboard/attachments/{attachment_id}` | one photo file | API key |
+| `GET /api/dashboard/transcripts/{session_id}` | the whole chat of one session | API key |
 
-ทุกเส้นใต้ `/api/dashboard` ต้องส่ง header `Authorization: Bearer <กุญแจ>` ที่ตรงกับ `DASHBOARD_API_KEY` ใน `.env`
-— ทีมออกแบบได้กุญแจดอกเดียวกัน · ไม่ตั้ง `DASHBOARD_API_KEY` = ทุกเส้นตอบ 503 · กุญแจผิดหรือไม่ส่ง = 401
-สเปกเต็มพร้อม curl: `docs/designs/09-modules/h7-dashboard-api.md`
+API key: header `Authorization: Bearer <key>`, the same value as `DASHBOARD_API_KEY` in `.env`. Wrong or missing key gives 401. `DASHBOARD_API_KEY` not set gives 503.
 
-## test
+Full routes for Postman: [`docs/api.md`](docs/api.md) · JSON and curl for each route: [`docs/designs/09-modules/h7-dashboard-api.md`](docs/designs/09-modules/h7-dashboard-api.md)
 
-```bash
-createdb ucr_nongmuang_test     # ครั้งเดียว
-uv run pytest
+## Code
+
+```
+app/
+  main.py        starts the app and the 3 background loops
+  api/           routes
+  controllers/   LINE webhook, dashboard, health
+  workers/       worker, sweeper, broadcaster
+  services/      one file per thing: session, state, quota, pdpa, broadcast, prompt, report ...
+  clients/       outside systems: database, redis, line, ai, weather
+  models/        data shapes
+  core/          config.py reads .env · default_config.py has the first model and prompts
+schema.sql       all tables
+tests/           pytest
+docker/          Dockerfiles and compose files for each container
 ```
 
-test ใช้ฐาน `ucr_nongmuang_test` กับ Redis db 15 แยกจากของที่แอปใช้
-**test ล้างฐานและ Redis db นั้นทุกรอบ** — อย่าชี้ `TEST_DATABASE_URL` หรือ `TEST_REDIS_URL` ไปที่ของจริง
+## Docs
 
-test ที่ยิง Gemini จริงถูกข้าม เปิดด้วย `LIVE_AI=1 uv run pytest`
-
-## ของที่ไม่ขึ้น git
-
-- `uploads/` — รูปที่ผู้แจ้งส่งมา
-- `.env` — ค่าจริง
-- `local/` — สมุดจดส่วนตัว
-
-## เอกสาร
-
-- `docs/requirements/` — ความต้องการ ข้อจำกัด user story
-- `docs/designs/` — แบบที่ใช้ตอนสร้างแต่ละส่วน
-- `docs/v2-0alpha/` — แบบของรุ่นที่รันอยู่ ไล่ตามโค้ดจริงตั้งแต่ข้อความเข้าจนเป็นรายงาน
+- [`docs/setup.md`](docs/setup.md) — install, run, connect LINE, turn on broadcast, test
+- [`docs/diagrams/`](docs/diagrams/) — how it works
+- [`docs/api.md`](docs/api.md) — all routes
+- [`docs/requirements/`](docs/requirements/) — needs, constraints, user stories

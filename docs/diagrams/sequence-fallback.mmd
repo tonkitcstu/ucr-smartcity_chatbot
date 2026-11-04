@@ -1,0 +1,70 @@
+---
+title: Fallback — Gemini Fails or Is Too Slow
+config:
+  theme: base
+  themeVariables:
+    fontFamily: "Inter, Helvetica, Arial, sans-serif"
+    fontSize: 14px
+---
+
+sequenceDiagram
+    autonumber
+    actor reporter as Reporter
+    participant line as LINE
+    participant worker as App: worker<br/>workers/worker.py
+    participant broadcaster as App: broadcaster<br/>workers/broadcaster.py
+    participant redis as Redis
+    participant postgres as PostgreSQL
+    participant gemini as Gemini
+
+    %% the fallback text is written in code, not by Gemini
+
+    %% 1. Chat answer fails
+    rect rgba(254, 202, 202, 0.3)
+        worker ->> redis: BUFFERING to PROCESSING, read buffer
+        worker ->> gemini: chat prompt + history + new messages
+        alt Gemini error, or no answer in AI_TIMEOUT_SECONDS 50
+            gemini --x worker: error or too slow
+        else broken JSON, or no text left
+            gemini -->> worker: bad answer
+            worker ->> postgres: save ai_call, status error
+        end
+        Note over worker,gemini: any other failing step goes here too:<br/>loading, photo download, database, reply
+        alt session SUSPENDED while Gemini was answering
+            worker ->> redis: drop this round's messages from buffer
+            Note over worker: no reply, the webhook already sent its fixed text
+        else not suspended
+            worker ->> line: reply fixed "system error, your story is kept, try again soon" text<br/>with the latest reply_token
+            line ->> reporter: fixed text
+            opt reply fails, reply_token older than 1 minute
+                Note over worker: logged, no other way to answer
+            end
+        end
+        worker ->> redis: PROCESSING to IDLE
+        Note over worker,redis: buffer kept, no new chat job<br/>next message from the reporter: new chat job, Gemini sees the kept messages too
+    end
+
+    %% 2. Analyse job fails
+    rect rgba(255, 190, 110, 0.12)
+        loop up to 3 tries, only for broken JSON
+            worker ->> gemini: analyser prompt + transcript
+            gemini -->> worker: reports JSON
+            Note over worker: broken JSON: save ai_call error, try again
+        end
+        Note over worker,postgres: Gemini error, or 3 broken answers: session stays closed, no reports<br/>nothing is sent to the reporter
+    end
+
+    %% 3. Broadcast fails
+    rect rgba(120, 160, 255, 0.12)
+        Note over broadcaster: forecast file not read by 08:00: friendly hello instead
+        loop each picked person
+            opt today's message not written yet
+                broadcaster ->> gemini: write today's message
+                gemini --x broadcaster: error, broken JSON, or no answer in 60 seconds
+                Note over broadcaster: skip this person, the next person asks Gemini again
+            end
+            broadcaster -x line: push fails
+            Note over broadcaster: skip this person, the next one gets the saved message
+        end
+        Note over broadcaster,postgres: a skipped person gets no message today<br/>and still counts as 1 of today's 10
+    end

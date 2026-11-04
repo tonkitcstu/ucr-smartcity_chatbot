@@ -1,4 +1,4 @@
-"""H6 Worker ทำรายงาน — S4 S7 · spec ใน #154 · แบบ docs/designs/09-modules/h6-report.puml"""
+"""H6 Worker ทำรายงาน — S4 S7 · spec ใน #154 · แบบ docs/diagrams/sequence-leaving.mmd"""
 
 import json
 import os
@@ -506,7 +506,7 @@ async def test_live_conversation_ending_with_bot_gets_analysed(client, db):
     assert len(await reports_of(db, session_id)) >= 1
 
 
-# --- H9 รับตำแหน่งและสติกเกอร์ — S13 · spec ใน #219 · แบบ docs/designs/09-modules/h9-location-sticker.puml ---
+# --- H9 รับตำแหน่งและสติกเกอร์ — S13 · spec ใน #219 · แบบ docs/diagrams/sequence-normal.mmd ---
 
 
 async def test_sticker_rows_reach_analyser_as_notes(client, db, ai_config, analyser_ai):
@@ -537,7 +537,7 @@ async def test_sticker_rows_reach_analyser_as_notes(client, db, ai_config, analy
     assert await status_of(db, session_id) == "analysed"
 
 
-# --- #242 เลือกบน DB ได้ว่าจะใช้ ai_configs แถวไหน — spec ใน #242 · แบบ docs/designs/09-modules/242-select-ai-config.puml ---
+# --- #242 เลือกบน DB ได้ว่าจะใช้ ai_configs แถวไหน — spec ใน #242 · แบบ docs/setup.md ---
 
 
 async def test_analyser_uses_the_active_config_not_the_newest_row(client, db, ai_config, analyser_ai):
@@ -564,7 +564,7 @@ async def test_analyser_uses_the_active_config_not_the_newest_row(client, db, ai
     assert report["ai_config_id"] == ai_config
 
 
-# --- #239 ② เพดานข้อความใน buffer ต่อใบ — spec ใน #239 · แบบ docs/designs/09-modules/239-buffer-limit.puml ---
+# --- #239 ② เพดานข้อความใน buffer ต่อใบ — spec ใน #239 · แบบ docs/diagrams/sequence-hit-limit.mmd ---
 
 
 async def skip_first(db, session_id, count):

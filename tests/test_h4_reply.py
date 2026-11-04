@@ -1,4 +1,4 @@
-"""H4 Worker ตอบผู้แจ้ง — S2 S3 · spec ใน #152 · แบบ docs/designs/09-modules/h4-reply.puml"""
+"""H4 Worker ตอบผู้แจ้ง — S2 S3 · spec ใน #152 · แบบ docs/diagrams/sequence-normal.mmd"""
 
 import asyncio
 import json
@@ -262,7 +262,7 @@ async def test_chat_job_through_handle_gets_reply(client, db, redis, outside, ai
     assert [token for token, _ in replies] == ["rt-1"]
 
 
-# --- H9 รับตำแหน่งและสติกเกอร์ — S4 S13 · spec ใน #219 · แบบ docs/designs/09-modules/h9-location-sticker.puml ---
+# --- H9 รับตำแหน่งและสติกเกอร์ — S4 S13 · spec ใน #219 · แบบ docs/diagrams/sequence-normal.mmd ---
 
 PIN_NOTE = "[ระบบ: ผู้แจ้งปักหมุดตำแหน่งแล้ว]"
 STICKER_NOTE = (
@@ -358,7 +358,7 @@ async def test_text_pin_sticker_image_go_to_ai_in_order(client, db, redis, outsi
     assert await db.fetchval("SELECT count(*) FROM messages WHERE role = 'user' AND status = 'answered'") == 4
 
 
-# --- H10 ตัวคุยเลือกปุ่มใต้ข้อความ — S3 S4 · spec ใน #226 · แบบ docs/designs/09-modules/h10-quick-reply.puml ---
+# --- H10 ตัวคุยเลือกปุ่มใต้ข้อความ — S3 S4 · spec ใน #226 · แบบ docs/diagrams/sequence-normal.mmd ---
 
 ASK_PIN = "ตรงนี้เกิดขึ้นแถวไหนเหรอคะ พอจะแชร์ตำแหน่งให้เมืองหน่อยได้ไหมคะ"
 ASK_PHOTO = "ขอบคุณค่ะ ส่งรูปมาให้เมืองดูได้เลยนะคะ"
@@ -541,7 +541,7 @@ async def test_answer_that_is_not_the_format_is_recorded_as_error(client, db, re
     assert ai_call["error"]
 
 
-# --- H11 ตัวคุยแยกคำตอบเป็นหลายข้อความ — milestone 2.0.1 ข้อ 2 · spec ใน #233 · แบบ docs/designs/09-modules/h11-multi-message.puml ---
+# --- H11 ตัวคุยแยกคำตอบเป็นหลายข้อความ — milestone 2.0.1 ข้อ 2 · spec ใน #233 · แบบ docs/diagrams/sequence-normal.mmd ---
 
 # คำตอบที่ AI แต่งตอนลองยิงจริง 2026-10-13 — สองข้อความ + ปุ่ม location
 FEEL = "เป็นมาตั้งสามปีแล้ว แถมท่วมสูงถึงเข่าแบบนี้ หนักหนาเหมือนกันนะคะ"
@@ -711,7 +711,7 @@ async def test_next_round_shows_ai_each_of_its_texts(client, db, redis, outside,
     ]
 
 
-# --- H13 ตัวคุยยื่นปุ่มคำตอบที่แต่งเอง — milestone 2.0.1 ข้อ 1 · spec ใน #237 · แบบ docs/designs/09-modules/h13-answer-buttons.puml ---
+# --- H13 ตัวคุยยื่นปุ่มคำตอบที่แต่งเอง — milestone 2.0.1 ข้อ 1 · spec ใน #237 · แบบ docs/diagrams/sequence-normal.mmd ---
 
 # คำตอบที่ AI แต่งตอนลองยิงจริง 2026-10-13 — คำถาม + ปุ่มคำตอบ 2 ปุ่ม
 ASK_WHEN = "ขอบคุณสำหรับตำแหน่งนะคะ แล้วบ้านร้อนแบบนี้ เป็นช่วงบ่ายหรือทั้งวันเลยคะ"
@@ -801,7 +801,7 @@ async def test_tapped_answer_comes_back_as_the_reporters_own_text(client, db, re
     ]
 
 
-# --- #242 เลือกบน DB ได้ว่าจะใช้ ai_configs แถวไหน — spec ใน #242 · แบบ docs/designs/09-modules/242-select-ai-config.puml ---
+# --- #242 เลือกบน DB ได้ว่าจะใช้ ai_configs แถวไหน — spec ใน #242 · แบบ docs/setup.md ---
 
 
 async def test_chat_uses_the_active_config_not_the_newest_row(client, db, redis, outside, ai_config, ai_calls):
@@ -827,7 +827,7 @@ async def test_chat_uses_the_active_config_not_the_newest_row(client, db, redis,
     assert await db.fetchval("SELECT ai_config_id FROM ai_calls") == ai_config
 
 
-# --- #239 ② เพดานข้อความใน buffer ต่อใบ — spec ใน #239 · แบบ docs/designs/09-modules/239-buffer-limit.puml ---
+# --- #239 ② เพดานข้อความใน buffer ต่อใบ — spec ใน #239 · แบบ docs/diagrams/sequence-hit-limit.mmd ---
 
 
 async def suspend(db, redis, session_id):

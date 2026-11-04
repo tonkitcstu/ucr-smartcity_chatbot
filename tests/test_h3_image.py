@@ -1,4 +1,4 @@
-"""H3 Controller รับรูปภายใน 3 วิ — S3 · spec ใน #151 · แบบ docs/designs/09-modules/h3-image.puml"""
+"""H3 Controller รับรูปภายใน 3 วิ — S3 · spec ใน #151 · แบบ docs/diagrams/sequence-normal.mmd"""
 
 import asyncio
 import json
@@ -164,7 +164,7 @@ async def test_image_before_accept_replies_card_and_stores_nothing(client, db, r
     assert await jobs(redis) == []
 
 
-# --- H9 รับตำแหน่งและสติกเกอร์ — S4 S13 · spec ใน #219 · แบบ docs/designs/09-modules/h9-location-sticker.puml ---
+# --- H9 รับตำแหน่งและสติกเกอร์ — S4 S13 · spec ใน #219 · แบบ docs/diagrams/sequence-normal.mmd ---
 
 
 async def test_pin_first_opens_session_and_queues_one_chat_job(client, db, redis, replies):

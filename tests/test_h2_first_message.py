@@ -1,4 +1,4 @@
-"""H2 Controller รับข้อความแรก — S2 · spec ใน #150 · แบบ docs/designs/09-modules/h2-first-message.puml"""
+"""H2 Controller รับข้อความแรก — S2 · spec ใน #150 · แบบ docs/diagrams/sequence-normal.mmd"""
 
 import asyncio
 import json
@@ -96,7 +96,7 @@ async def test_next_message_after_bot_answered_reuses_open_session(client, db, r
     assert await jobs(redis) == [{"kind": "chat", "session_id": session_id}]
 
 
-# --- #239 ① เพดาน token ต่อผู้แจ้งต่อวัน — T10 · spec ใน #239 · แบบ docs/designs/09-modules/239-user-token-limit.puml ---
+# --- #239 ① เพดาน token ต่อผู้แจ้งต่อวัน — T10 · spec ใน #239 · แบบ docs/diagrams/sequence-hit-limit.mmd ---
 
 LIMIT = 100
 
@@ -272,7 +272,7 @@ async def test_message_while_waiting_for_silence_gets_its_own_fixed_reply(client
     assert await jobs(redis) == [{"kind": "chat", "session_id": session_id}]
 
 
-# --- #239 ② เพดานข้อความใน buffer ต่อใบ — T10 S30 · spec ใน #239 · แบบ docs/designs/09-modules/239-buffer-limit.puml ---
+# --- #239 ② เพดานข้อความใน buffer ต่อใบ — T10 S30 · spec ใน #239 · แบบ docs/diagrams/sequence-hit-limit.mmd ---
 
 BUFFER_LIMIT = 3
 
@@ -440,7 +440,7 @@ async def test_after_suspension_expires_the_session_goes_the_usual_way(client, d
     assert await statuses(db) == ["skipped"] * 4 + ["pending"]
 
 
-# --- #239 ③ เพดาน token ของตัวคุยทั้งระบบต่อวัน — T10 S30 · spec ใน #239 · แบบ docs/designs/09-modules/239-system-token-limit.puml ---
+# --- #239 ③ เพดาน token ของตัวคุยทั้งระบบต่อวัน — T10 S30 · spec ใน #239 · แบบ docs/diagrams/sequence-hit-limit.mmd ---
 
 SYSTEM_LIMIT = 100
 

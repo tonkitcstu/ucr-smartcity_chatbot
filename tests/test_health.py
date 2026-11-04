@@ -1,4 +1,4 @@
-"""health เส้นเช็คว่า PSQL · Redis · worker · sweeper ยังอยู่ — T2 · spec ใน #206 · แบบ docs/designs/09-modules/health.puml"""
+"""health เส้นเช็คว่า PSQL · Redis · worker · sweeper ยังอยู่ — T2 · spec ใน #206 · แบบ docs/setup.md"""
 
 import asyncio
 from contextlib import asynccontextmanager

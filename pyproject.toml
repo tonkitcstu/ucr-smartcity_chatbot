@@ -1,6 +1,6 @@
 [project]
 name = "ucr-smartcity-chatbot"
-version = "2.0.0"
+version = "2.0.1"
 description = "UCR Chatbot: a LINE bot that turns what people tell about their community into reports for the city design team"
 readme = "README.md"
 requires-python = ">=3.12"

@@ -1,7 +1,7 @@
 # ทักไปก่อนทุกวัน — อ่านพยากรณ์หลังตี 1 · ทักตั้งแต่ 8 โมง · เลย 2 ทุ่มไม่ทัก
 # ฝนจะตก → บอกเรื่องฝน · ไม่ตก หรือ 8 โมงแล้วยังอ่านพยากรณ์ไม่ได้ → ทักถามไถ่
 # สุ่มวันละไม่เกิน BROADCAST_DAILY_LIMIT คน · แบบ docs/diagrams/broadcast-flow.mmd
-# พยากรณ์ใช้ไฟล์ปลอม app/clients/mock_forecast.json (ฝนตกช่วง 14:00–15:00) · AI กับ LINE เป็นของปลอม
+# พยากรณ์ใช้ไฟล์ปลอม app/clients/mock_forecast.json (ไม่มีฝน) · ข้อที่อยากได้ฝนใส่พยากรณ์เองผ่าน forecast · AI กับ LINE เป็นของปลอม
 
 import asyncio
 import json
@@ -15,10 +15,10 @@ from tests.line_webhook import follow_event, post_webhook, text_event, unfollow_
 
 THAI_TIME = timezone(timedelta(hours=7))
 DAY = datetime(2026, 10, 23, tzinfo=THAI_TIME)
-GREETING = ["สวัสดีค่ะ เมืองจากทีม UCR นะคะ วันนี้บ่าย ๆ อาจมีฝน", "ฝนตกทีไรแถวบ้านเป็นยังไงบ้างคะ ไม่สะดวกก็ไม่ต้องตอบนะคะ"]
+GREETING = ["สวัสดีค่ะ วันนี้บ่าย ๆ อาจมีฝน", "ฝนตกทีไรแถวบ้านเป็นยังไงบ้างคะ ไม่สะดวกก็ไม่ต้องตอบนะคะ"]
 REPLY = "ขอบคุณที่เล่าค่ะ น้ำท่วมสูงแค่ไหนคะ"
 REASON = "พยากรณ์อากาศบอกว่าวันนี้อาจมีฝนแถวบ้าน"
-FRIENDLY = "ทักมาสวัสดี ขอให้วันนี้เป็นวันที่ดี ถ้ามีปัญหาอะไรแถวชุมชน บอกเมืองได้เลย :)"
+FRIENDLY = "ทักมาสวัสดี ขอให้วันนี้เป็นวันที่ดี เจออะไรแถวบ้านก็มาเล่าให้ฟังได้นะ"
 
 
 def at(hour: int, minute: int = 0) -> datetime:
@@ -129,7 +129,8 @@ async def test_no_message_on_the_31st(client, db, ai_chats, pushes):
 
 
 # หลังตี 1 อ่านพยากรณ์ ฝนจะตก → รอทัก · ยังไม่ถึง 8 โมงยังไม่ทัก
-async def test_rain_is_scheduled_after_one_am(client, db, ai_chats, pushes):
+async def test_rain_is_scheduled_after_one_am(client, db, ai_chats, pushes, forecast):
+    forecast[0] = forecast_of(community(hour("14:00", "มีฝน", 2.0)))
     await add_user(db, "U_a")
 
     await tick(at(1, 0))
@@ -142,7 +143,8 @@ async def test_rain_is_scheduled_after_one_am(client, db, ai_chats, pushes):
 
 
 # ถึง 8 โมง → ตัวคุยแต่งข้อความทักจากเหตุที่ทัก · push หาผู้แจ้ง · ใบใหม่ติดป้าย broadcast · บันทึกข้อความและประวัติ
-async def test_greets_everyone_at_eight(client, db, redis, ai_chats, pushes):
+async def test_greets_everyone_at_eight(client, db, redis, ai_chats, pushes, forecast):
+    forecast[0] = forecast_of(community(hour("14:00", "มีฝน", 2.0)))
     user_id = await add_user(db, "U_a")
     await tick(at(1, 0))
 
@@ -265,20 +267,8 @@ async def test_skips_whoever_is_talking(client, db, ai_chats, pushes):
     assert await broadcast_session(db, busy) is None
 
 
-# ไม่มีฝน → ทักถามไถ่ · ตัวคุยแต่งจากเหตุที่ทักแบบถามไถ่
-async def test_no_rain_sends_a_friendly_hello(client, db, ai_chats, pushes, monkeypatch):
-    from app.clients import weather
-
-    real_fetch = weather.fetch_daily
-
-    async def dry_day(day):
-        forecast = await real_fetch(day)
-        for community in forecast["WeatherForecasts"]:
-            for hour in community["forecasts"]:
-                hour["condition_label"], hour["rainfall"] = "แจ่มใส", 0
-        return forecast
-
-    monkeypatch.setattr(weather, "fetch_daily", dry_day)
+# ไม่มีฝน (พยากรณ์ปลอมตอน FORECAST_URL ว่าง) → ทักถามไถ่ · ตัวคุยแต่งจากเหตุที่ทักแบบถามไถ่
+async def test_no_rain_sends_a_friendly_hello(client, db, ai_chats, pushes):
     await add_user(db, "U_a")
 
     await tick(at(1, 0))
@@ -522,6 +512,23 @@ async def test_resume_sends_only_what_is_left_of_the_daily_limit(client, db, ai_
     await tick(at(8, 1))
 
     assert len(pushes) == 1
+
+
+# ได้ข้อความทักไปแล้วไม่ทักอีกจนครบ BROADCAST_GAP_DAYS 7 วัน · ใบเก่าปิดไปแล้วก็ยังนับ
+async def test_not_again_within_seven_days(client, db, ai_chats, pushes):
+    for line_user_id, days_ago in (("U_six_days", 6), ("U_seven_days", 7)):
+        user_id = await add_user(db, line_user_id)
+        past = await db.fetchval(
+            "INSERT INTO broadcasts (forecast_date, reason, status) VALUES ($1, 'x', 'sent') RETURNING broadcast_id",
+            DAY.date() - timedelta(days=days_ago),
+        )
+        await db.execute(
+            "INSERT INTO sessions (user_id, status, broadcast_id) VALUES ($1, 'closed', $2)", user_id, past
+        )
+
+    await tick(at(8, 0))
+
+    assert [to for to, _ in pushes] == ["U_seven_days"]
 
 
 async def test_no_more_than_line_messages_left_this_month(client, db, ai_chats, pushes, line_quota):

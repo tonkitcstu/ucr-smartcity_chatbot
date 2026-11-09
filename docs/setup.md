@@ -34,6 +34,7 @@ cp .env.example .env
 | `BROADCAST_ENABLED` | no | `false` | bot messages reporters first every day |
 | `FORECAST_URL` | for broadcast | empty | daily forecast file, `{date}` becomes `YYYY-MM-DD` · empty: `app/clients/mock_forecast.json` |
 | `BROADCAST_DAILY_LIMIT` | no | `10` | people a day, picked at random |
+| `BROADCAST_GAP_DAYS` | no | `7` | days before the same person can get another broadcast · `1` = every day, the lowest |
 | `BROADCAST_WAIT_HOURS` | no | `24` | hours a broadcast chat waits for a reply before it closes |
 | `BROADCAST_FETCH_AT` | no | `01:00` | reads the forecast from this time, Thai time |
 | `BROADCAST_SEND_AT` | no | `08:00` | sends from this time |
@@ -119,7 +120,7 @@ On the first start with an empty database, the app adds the first model, prompts
 docker compose up -d --force-recreate app
 ```
 
-- Empty `FORECAST_URL` uses `app/clients/mock_forecast.json`. It has rain every day, so every message is about rain.
+- Empty `FORECAST_URL` uses `app/clients/mock_forecast.json`. It has no rain, so every message is a friendly hello.
 - Each push counts 1 of LINE's monthly messages for each person. The free plan has 300 a month. The bot sends to at most 10 people a day, and to nobody on the 31st.
 - One row a day in table `broadcasts`. See the last days:
 

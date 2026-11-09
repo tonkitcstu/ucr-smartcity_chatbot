@@ -34,7 +34,6 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 API_ENDPOINT = os.getenv(
     "API_ENDPOINT", "https://generativelanguage.googleapis.com/v1beta/openai/"
 )
-REASONING_EFFORT = os.getenv("REASONING_EFFORT", "high").strip().lower()
 
 # worker: รอเงียบกี่วินาทีก่อนตอบ · ปิดได้ (test เรียก run_chat เอง)
 SILENCE_SECONDS = float(os.getenv("SILENCE_SECONDS") or 3)
@@ -48,15 +47,10 @@ SWEEP_EVERY_SECONDS = _int("SWEEP_EVERY_SECONDS", 60)
 
 # กุญแจที่ทีมแดชบอร์ดแนบมาใน Authorization: Bearer <กุญแจ> · ไม่ตั้ง = ทุกเส้นใต้ /api/dashboard ตอบ 503
 DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY")
-CORS_ORIGINS = [
-    origin.strip().rstrip("/")
-    for origin in (os.getenv("CORS_ORIGINS") or "").split(",")
-    if origin.strip()
-]
 
 # ทักผู้แจ้งไปก่อนทุกวัน · ฝนจะตกบอกเรื่องฝน วันอื่นทักถามไถ่ · ค่าตั้งต้นปิด เพราะเปิดแล้วส่งข้อความหาผู้แจ้งจริง
 BROADCAST_ENABLED = _flag("BROADCAST_ENABLED")
-# ที่อยู่ไฟล์พยากรณ์รายวันที่ Lambda อัปโหลด · {date} แทนด้วย YYYY-MM-DD · ว่าง = ใช้ mock_forecast.json
+# ที่อยู่ไฟล์พยากรณ์รายวันที่ Lambda อัปโหลด · {date} แทนด้วย YYYY-MM-DD · ว่าง = ใช้ mock_forecast.json (ไม่มีฝน)
 FORECAST_URL = os.getenv("FORECAST_URL", "").strip()
 # เวลาไทยทั้งหมด · อ่านพยากรณ์ตั้งแต่ BROADCAST_FETCH_AT เพราะทีม data อัปโหลดพยากรณ์ของวันใหม่ตอนตี 1
 # ทักตั้งแต่ BROADCAST_SEND_AT · ถึง BROADCAST_SEND_UNTIL แล้วยังไม่ได้ทัก วันนั้นไม่ทักแล้ว ไม่ส่งข้อความตอนดึก
@@ -69,26 +63,7 @@ BROADCAST_CHECK_SECONDS = _int("BROADCAST_CHECK_SECONDS", 60)
 BROADCAST_WAIT_HOURS = _int("BROADCAST_WAIT_HOURS", 24)
 # ทักวันละไม่เกินกี่คน สุ่มเลือก · LINE แบบฟรีส่ง push ได้เดือนละ 300 ข้อความ นับตามจำนวนคนรับ · 10 คน x 30 วัน = 300
 BROADCAST_DAILY_LIMIT = _int("BROADCAST_DAILY_LIMIT", 10)
+# คนที่ได้ข้อความทักไปแล้ว ไม่ทักอีกจนครบกี่วัน · 7 = ได้วันจันทร์ ทักอีกได้วันจันทร์หน้า · 1 = ทุกวัน
+# ต่ำสุด 1 เพราะ 0 ทำให้ทักต่อหลังแอปดับเลือกคนที่ได้ไปแล้ววันนี้ซ้ำ
+BROADCAST_GAP_DAYS = max(1, _int("BROADCAST_GAP_DAYS", 7))
 
-
-DEV_ROUTES_ENABLED = _flag("DEV_ROUTES_ENABLED")
-
-QUOTA_LIMIT_BY = os.getenv("QUOTA_LIMIT_BY", "both").strip().lower()
-QUOTA_ENABLED = QUOTA_LIMIT_BY != "off"
-QUOTA_WINDOW_HOURS = _int("QUOTA_WINDOW_HOURS", 6)
-
-QUOTA_DAY_CALLS = _int("QUOTA_DAY_CALLS", 2500)
-QUOTA_WINDOW_CALLS = _int("QUOTA_WINDOW_CALLS", 900)
-QUOTA_DAY_TOKENS = _int("QUOTA_DAY_TOKENS", 22_000_000)
-QUOTA_WINDOW_TOKENS = _int("QUOTA_WINDOW_TOKENS", 8_000_000)
-
-QUOTA_YELLOW_CALLS = _int("QUOTA_YELLOW_CALLS", 150)
-QUOTA_YELLOW_TOKENS = _int("QUOTA_YELLOW_TOKENS", 1_300_000)
-
-QUOTA_USER_TURNS = _int("QUOTA_USER_TURNS", 60)
-QUOTA_USER_YELLOW_TURNS = _int("QUOTA_USER_YELLOW_TURNS", 45)
-
-QUOTA_RUSH_TURNS = _int("QUOTA_RUSH_TURNS", 15)
-QUOTA_RUSH_SECONDS = _int("QUOTA_RUSH_SECONDS", 300)
-
-QUOTA_DRAFT_TURNS = _int("QUOTA_DRAFT_TURNS", 40)

@@ -50,7 +50,7 @@ sequenceDiagram
             broadcaster ->> postgres: count sessions already opened for today
             broadcaster ->> line: read messages left this month
             line -->> broadcaster: free plan has 300 a month
-            broadcaster ->> postgres: pick at random<br/>up to BROADCAST_DAILY_LIMIT 10 minus already opened<br/>no more than messages left<br/>still follows the bot, no open session, no session for today yet
+            broadcaster ->> postgres: pick at random<br/>up to BROADCAST_DAILY_LIMIT 10 minus already opened<br/>no more than messages left<br/>still follows the bot, no open session, no broadcast in the last 7 days
         end
 
         %% 3. Message each picked person

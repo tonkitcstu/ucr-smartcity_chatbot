@@ -10,7 +10,7 @@ A LINE bot for UCR / TONKIT Lab. People in a community tell it about their envir
 - **PDPA**: a new reporter gets the PDPA card first. Nothing is saved until they tap accept.
 - **Limits**: tokens per reporter per day, tokens for everyone per day, and messages waiting in one chat. A reporter who hits a limit gets a fixed text instead of Gemini.
 - **Fallback**: Gemini fails or takes over 50 seconds. The reporter gets a fixed text, and their messages stay for the next answer.
-- **Broadcast**: off by default. Every day the bot messages up to 10 random reporters first. Rain in the forecast from 08:00 to 20:00 gets a rain message, other days get a friendly hello. No message on the 31st.
+- **Broadcast**: off by default. Every day the bot messages up to 10 random reporters first, each person at most once every 7 days. Rain in the forecast from 08:00 to 20:00 gets a rain message, other days get a friendly hello. No message on the 31st.
 
 Gemini writes every message the bot sends. Fixed texts in code: the fallback text, the limit texts, and the PDPA card with its welcome text.
 

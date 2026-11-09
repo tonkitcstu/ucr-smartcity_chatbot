@@ -4,7 +4,7 @@
 from datetime import date
 
 from app.clients import database, line, weather
-from app.core.config import BROADCAST_DAILY_LIMIT, BROADCAST_SEND_AT, BROADCAST_SEND_UNTIL
+from app.core.config import BROADCAST_DAILY_LIMIT, BROADCAST_GAP_DAYS, BROADCAST_SEND_AT, BROADCAST_SEND_UNTIL
 from app.models.answer import ChatAnswer
 from app.models.broadcast import Broadcast
 from app.models.session import Session
@@ -18,7 +18,7 @@ async def find_for(day: date) -> Broadcast | None:
 
 # เหตุที่ทัก ส่งให้ตัวคุยใช้แต่งข้อความ · ทักทุกวัน วันที่ฝนจะตกบอกเรื่องฝน วันอื่นทักถามไถ่
 RAIN_REASON = "พยากรณ์อากาศบอกว่าวันนี้อาจมีฝนแถวบ้าน"
-FRIENDLY_REASON = "ทักมาสวัสดี ขอให้วันนี้เป็นวันที่ดี ถ้ามีปัญหาอะไรแถวชุมชน บอกเมืองได้เลย :)"
+FRIENDLY_REASON = "ทักมาสวัสดี ขอให้วันนี้เป็นวันที่ดี เจออะไรแถวบ้านก็มาเล่าให้ฟังได้นะ"
 
 
 # อ่านพยากรณ์ของวันนั้นแล้วจดลงฐานว่ารอทัก · ฝนจะตกในช่วงที่ทักได้ → บอกเรื่องฝน · ไม่ตก → ทักถามไถ่
@@ -47,6 +47,7 @@ async def mark_expired(broadcast: Broadcast) -> None:
 
 
 # คนที่จะทักรอบนี้ สุ่มจากทุกคนที่ยอมรับ PDPA แล้ว · ยังไม่รู้ว่าใครอยู่ชุมชนไหน
+# ข้ามคนที่ได้ข้อความทักไปแล้วในช่วง BROADCAST_GAP_DAYS วัน
 # จำนวน = BROADCAST_DAILY_LIMIT ลบคนที่ได้ไปแล้ววันนี้ (แอปดับกลางทาง) · ไม่เกินข้อความที่เหลือของเดือนใน LINE
 async def recipients(broadcast: Broadcast) -> list[User]:
     count = BROADCAST_DAILY_LIMIT - await database.count_broadcast_sessions(broadcast.broadcast_id)
@@ -55,7 +56,7 @@ async def recipients(broadcast: Broadcast) -> list[User]:
         count = min(count, left)
     if count <= 0:
         return []
-    return await database.select_broadcast_recipients(broadcast.broadcast_id, count)
+    return await database.select_broadcast_recipients(broadcast, count, BROADCAST_GAP_DAYS)
 
 
 # เปิดใบที่ติดป้ายว่าบอททักไปก่อน · None = ไม่ทักคนนี้

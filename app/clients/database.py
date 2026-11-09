@@ -422,7 +422,8 @@ async def count_broadcast_sessions(broadcast_id: UUID) -> int:
 
 
 # สุ่มคนที่ทักได้ ไม่เกิน count คน · ยังติดตามบอท · ไม่มีใบเปิดอยู่ · ยังไม่ได้ใบของการทักครั้งนี้
-async def select_broadcast_recipients(broadcast_id: UUID, count: int) -> list[User]:
+# ข้าม: บล็อกบอท · มีใบเปิดอยู่ · ได้ข้อความทักของวันที่ใหม่กว่า (วันนี้ - gap_days) รวมของวันนี้เอง
+async def select_broadcast_recipients(broadcast: Broadcast, count: int, gap_days: int) -> list[User]:
     rows = await pool.fetch(
         """
         SELECT u.user_id, u.line_user_id, u.pdpa_accepted_at
@@ -430,12 +431,14 @@ async def select_broadcast_recipients(broadcast_id: UUID, count: int) -> list[Us
         WHERE u.blocked_at IS NULL
           AND NOT EXISTS (
               SELECT 1 FROM sessions s
-              WHERE s.user_id = u.user_id AND (s.status = 'open' OR s.broadcast_id = $1)
+              LEFT JOIN broadcasts b ON b.broadcast_id = s.broadcast_id
+              WHERE s.user_id = u.user_id AND (s.status = 'open' OR b.forecast_date > $1::date - $2::int)
           )
         ORDER BY random()
-        LIMIT $2
+        LIMIT $3
         """,
-        broadcast_id,
+        broadcast.forecast_date,
+        gap_days,
         count,
     )
     return [User(**row) for row in rows]
